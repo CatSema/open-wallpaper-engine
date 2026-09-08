@@ -65,7 +65,9 @@ bool Device::CheckGPU(vvk::PhysicalDevice gpu, std::span<const Extension> exts,
         .pNext = requires_timeline_semaphore ? &timeline_features : nullptr,
     };
     gpu.GetFeatures2KHR(features2);
+#if ! defined(__APPLE__)
     if (! features2.features.geometryShader) return false;
+#endif
     if (requires_timeline_semaphore && ! timeline_features.timelineSemaphore) return false;
     return true;
 }
@@ -143,7 +145,8 @@ bool Device::Create(Instance& inst, std::span<const Extension> exts, VkExtent2D 
     device.m_enabled_device_extensions.assign(tested_exts.begin(), tested_exts.end());
     bool rq_surface = ! inst.offscreen();
 
-    // The WE particle vertex ABI requires geometry shaders.
+    // The WE particle vertex ABI can use a geometry-shader or expanded-quad path
+    // on Apple/Metal, where Vulkan geometry shaders are not available.
     VkPhysicalDeviceTimelineSemaphoreFeaturesKHR supported_timeline {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES_KHR,
         .pNext = nullptr,
@@ -166,10 +169,12 @@ bool Device::Create(Instance& inst, std::span<const Extension> exts, VkExtent2D 
         rstd_error("required vulkan feature timelineSemaphore is not supported");
         return false;
     }
+#if ! defined(__APPLE__)
     if (! supported2.features.geometryShader) {
         rstd_error("required vulkan feature geometryShader is not supported");
         return false;
     }
+#endif
     const bool enable_shader_output_viewport_index =
         exists(tested_exts, VK_EXT_SHADER_VIEWPORT_INDEX_LAYER_EXTENSION_NAME);
     const bool enable_multi_viewport =
@@ -181,7 +186,11 @@ bool Device::Create(Instance& inst, std::span<const Extension> exts, VkExtent2D 
          (VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT)) ==
         (VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT);
     VkPhysicalDeviceFeatures enabled {};
-    enabled.geometryShader    = VK_TRUE;
+#if defined(__APPLE__)
+    enabled.geometryShader = supported2.features.geometryShader;
+#else
+    enabled.geometryShader = VK_TRUE;
+#endif
     enabled.sampleRateShading = supported2.features.sampleRateShading;
     enabled.samplerAnisotropy = supported2.features.samplerAnisotropy;
     enabled.multiViewport     = enable_multi_viewport ? VK_TRUE : VK_FALSE;
@@ -232,6 +241,7 @@ bool Device::Create(Instance& inst, std::span<const Extension> exts, VkExtent2D 
     }
     device.m_capabilities = DeviceCapabilities {
         .timeline_semaphore           = true,
+        .geometry_shader              = supported2.features.geometryShader != VK_FALSE,
         .synchronization2             = enable_sync2,
         .push_descriptor              = exists(tested_exts, VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME),
         .max_push_descriptors         = max_push_descriptors,

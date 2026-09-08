@@ -64,6 +64,19 @@ constexpr rstd::array<Extension, 4> base_inst_exts {
     Extension { false, VK_KHR_EXTERNAL_SEMAPHORE_CAPABILITIES_EXTENSION_NAME },
     Extension { false, VK_KHR_EXTERNAL_FENCE_CAPABILITIES_EXTENSION_NAME },
 };
+#if defined(__APPLE__)
+constexpr rstd::array<Extension, 7> base_device_exts {
+    // MoltenVK's swapchain→Metal present path uses the portability subset.
+    Extension { false, "VK_KHR_portability_subset" },
+    Extension { false, VK_EXT_MEMORY_BUDGET_EXTENSION_NAME },
+    // VideoToolbox frames are imported through MoltenVK's Metal-object bridge.
+    Extension { false, "VK_EXT_metal_objects" },
+    Extension { false, VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME },
+    Extension { false, VK_EXT_SHADER_VIEWPORT_INDEX_LAYER_EXTENSION_NAME },
+    Extension { true, VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME },
+    Extension { false, VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME },
+};
+#else
 constexpr rstd::array<Extension, 8> base_device_exts {
     Extension { false, VK_EXT_MEMORY_BUDGET_EXTENSION_NAME },
     Extension { false, VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME },
@@ -79,8 +92,14 @@ constexpr rstd::array<Extension, 8> base_device_exts {
     // (0, 0); the daemon then conservatively assumes cross-GPU.
     Extension { false, VK_EXT_PHYSICAL_DEVICE_DRM_EXTENSION_NAME },
 };
+#endif
 
 void AppendVideoDeviceExtensions(std::vector<Extension>& device_exts) {
+#if defined(__APPLE__)
+    // VideoToolbox frames use the Metal-object import path. The DMA-BUF/DRM
+    // and Vulkan-video extensions below are Linux-only interop requirements.
+    (void)device_exts;
+#else
     device_exts.push_back({ false, VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME });
     device_exts.push_back({ false, VK_KHR_IMAGE_FORMAT_LIST_EXTENSION_NAME });
     device_exts.push_back({ false, VK_EXT_IMAGE_DRM_FORMAT_MODIFIER_EXTENSION_NAME });
@@ -93,6 +112,7 @@ void AppendVideoDeviceExtensions(std::vector<Extension>& device_exts) {
     device_exts.push_back({ false, VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME });
     device_exts.push_back({ false, VK_EXT_DESCRIPTOR_BUFFER_EXTENSION_NAME });
     device_exts.push_back({ false, VK_EXT_SHADER_OBJECT_EXTENSION_NAME });
+#endif
 }
 
 void ReleaseCompletedRetiredResources(Device& device, RenderingResources& rr) {
@@ -461,6 +481,14 @@ bool VulkanRender::Impl::init(RenderInitInfo info, SceneLoadBenchRecorderView lo
             rstd_error("resource registry init failed");
             return false;
         }
+#if defined(__APPLE__)
+        if (! info.offscreen) {
+            // Surface-mode FinPass uses a fullscreen graphics pass. The
+            // swapchain format is fixed when Device::Create returns, so it
+            // can be part of the render-pass/pipeline resource plan.
+            m_finpass->setPresentFormat(m_device->swapchain().format());
+        }
+#endif
         m_rendering_resources.resources.SetVideoDecodeOptions(TextureCache::VideoDecodeOptions {
             .hwdec       = info.video_hwdec,
             .render_node = info.video_render_node,
@@ -599,12 +627,34 @@ bool VulkanRender::Impl::CreateRenderingResource(RenderingResources& rr) {
         }
     }
 
-    // Exportable SYNC_FD semaphore used by the waywallen-renderer host
-    // to ship a dma_fence sync_file to display clients on each
-    // FrameReady event. Created in both offscreen and surface modes —
-    // only the offscreen drawFrame path currently signals it, but
-    // having it always present keeps the lifetime simple.
+    // Frame signal semaphore. On Linux it is created exportable (SYNC_FD) so
+    // the waywallen-renderer host can ship a dma_fence sync_file to display
+    // clients on each FrameReady event. macOS portability drivers don't
+    // support fd export — there the semaphore is created WITHOUT the export
+    // pNext: it still signals every frame submission (the surface path
+    // depends on it), only the fd export stays unavailable.
     {
+#if defined(__APPLE__)
+        VkSemaphoreCreateInfo ci {
+            .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+            .pNext = nullptr,
+            .flags = 0,
+        };
+        VkExportSemaphoreCreateInfo export_info {
+            .sType       = VK_STRUCTURE_TYPE_EXPORT_SEMAPHORE_CREATE_INFO,
+            .pNext       = nullptr,
+            .handleTypes = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT_KHR,
+        };
+        if (m_device->handle().Dispatch().vkGetSemaphoreFdKHR != nullptr) {
+            ci.pNext = &export_info;
+        }
+        VkResult vr = m_device->handle().CreateSemaphore(ci, rr.sem_export);
+        if (vr != VK_SUCCESS) {
+            rstd_error("vulkan: frame signal semaphore create failed (vr={})",
+                       static_cast<int>(vr));
+            return false;
+        }
+#else
         VkExportSemaphoreCreateInfo export_info {
             .sType       = VK_STRUCTURE_TYPE_EXPORT_SEMAPHORE_CREATE_INFO,
             .pNext       = nullptr,
@@ -616,6 +666,7 @@ bool VulkanRender::Impl::CreateRenderingResource(RenderingResources& rr) {
             .flags = 0,
         };
         VVK_CHECK_BOOL_RE(m_device->handle().CreateSemaphore(ci, rr.sem_export));
+#endif
     }
 
     rr.shader_reflection_cache = rstd::Some(rstd::mut_ref<ShaderReflectionCache>::from_raw_parts(
@@ -754,9 +805,9 @@ void VulkanRender::Impl::drawFrameSwapchain(Scene& scene) {
 
     auto& sem_present_done = m_sem_swap_finish_per_image[image_index];
 
-    // Swapchain image is only written via FinPass blit/copy (TRANSFER).
-    // Waiting at COLOR_ATTACHMENT_OUTPUT lets the layout transition + transfer
-    // race the presentation engine's read → sync-validation WRITE_AFTER_READ.
+    // Surface-mode FinPass writes the acquired image as a color attachment;
+    // the acquire wait therefore has to cover COLOR_ATTACHMENT_OUTPUT. The
+    // offscreen transfer path does not use this submission branch.
     auto                        pending_upload = rr.resources.PendingUpload();
     const bool                  wait_upload    = pending_upload.is_some();
     rstd::array<VkSemaphore, 2> wait_semaphores {
@@ -764,7 +815,11 @@ void VulkanRender::Impl::drawFrameSwapchain(Scene& scene) {
         *rr.sem_upload,
     };
     rstd::array<VkPipelineStageFlags, 2> wait_stages {
+#if defined(__APPLE__)
+        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+#else
         VK_PIPELINE_STAGE_TRANSFER_BIT,
+#endif
         vk_upload_wait_stages,
     };
     rstd::array<std::uint64_t, 2> wait_values {

@@ -43,6 +43,15 @@ visibility = "public"
 
 [external-dependencies.cmake.cef]
 workspace = true
+condition = 'target.os == "linux"'
+targets = [
+  { name = "libcef_lib", visibility = "public" },
+  { name = "libcef_dll_wrapper", visibility = "public" },
+]
+
+[external-dependencies.cmake.cef-macos]
+workspace = true
+condition = 'target.os == "macos"'
 targets = [
   { name = "libcef_lib", visibility = "public" },
   { name = "libcef_dll_wrapper", visibility = "public" },

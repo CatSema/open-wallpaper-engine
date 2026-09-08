@@ -15,6 +15,12 @@ void OsrRenderHandler::SetViewSize(int width, int height) {
     view_h_ = height;
 }
 
+void OsrRenderHandler::SetDeviceScaleFactor(float scale) {
+    if (! std::isfinite(scale) || scale <= 0.0f) return;
+    std::lock_guard lk(mu_);
+    device_scale_factor_ = scale;
+}
+
 void OsrRenderHandler::GetViewRect(CefRefPtr<CefBrowser> /*browser*/, CefRect& rect) {
     std::lock_guard lk(mu_);
     rect.x      = 0;
@@ -25,7 +31,7 @@ void OsrRenderHandler::GetViewRect(CefRefPtr<CefBrowser> /*browser*/, CefRect& r
 
 bool OsrRenderHandler::GetScreenInfo(CefRefPtr<CefBrowser> /*browser*/, CefScreenInfo& info) {
     std::lock_guard lk(mu_);
-    info.device_scale_factor = 1.0f;
+    info.device_scale_factor = device_scale_factor_;
     info.depth               = 32;
     info.depth_per_component = 8;
     info.is_monochrome       = false;
@@ -56,6 +62,12 @@ void OsrRenderHandler::OnAcceleratedPaint(CefRefPtr<CefBrowser> /*browser*/, Pai
                                           const RectList& /*dirtyRects*/,
                                           const CefAcceleratedPaintInfo& info) {
     if (type != PET_VIEW) return;
+#if defined(__APPLE__)
+    // CEF 149 exposes accelerated IOSurface metadata on macOS, but its
+    // windowless shared-texture switch is not implemented for this platform.
+    // The supported macOS path is OnPaint followed by a GPU upload.
+    (void)info;
+#else
     if (! accel_cb_) return;
 
     DmaBufFrame frame;
@@ -78,6 +90,7 @@ void OsrRenderHandler::OnAcceleratedPaint(CefRefPtr<CefBrowser> /*browser*/, Pai
     // Synchronous: callback must finish before this returns; CEF
     // reclaims the DMA-BUF the moment we exit.
     accel_cb_(frame);
+#endif
 }
 
 } // namespace weweb

@@ -67,7 +67,7 @@ set_property(GLOBAL PROPERTY WEWEB_CEF_BINARY_FILES "${CEF_BINARY_FILES}")
 set_property(GLOBAL PROPERTY WEWEB_CEF_RESOURCE_DIR "${CEF_RESOURCE_DIR}")
 set_property(GLOBAL PROPERTY WEWEB_CEF_RESOURCE_FILES "${CEF_RESOURCE_FILES}")
 
-if(COMMAND lito_export_asset_set)
+if(COMMAND lito_export_asset_set AND NOT OS_MAC)
     lito_export_asset_set(
         NAME runtime
         ROOT "${CEF_BINARY_DIR}"
@@ -95,6 +95,57 @@ if(NOT TARGET libcef_dll_wrapper)
         "${CEF_LIBCEF_DLL_WRAPPER_PATH}"
         "${CMAKE_CURRENT_BINARY_DIR}/libcef_dll_wrapper"
         EXCLUDE_FROM_ALL)
+endif()
+
+if(OS_MAC)
+    # The macOS CEF distribution is a dynamically loaded framework. The CEF
+    # wrapper owns the loader, so there is no libcef shared-library path to
+    # expose as an imported target here.
+    # CEF's wrapper is a conventional third-party source tree. Disabling CMake
+    # module dependency scanning avoids invoking clang-scan-deps with the
+    # project module graph for sources that contain no C++ modules.
+    set_property(TARGET libcef_dll_wrapper PROPERTY CXX_SCAN_FOR_MODULES OFF)
+    if(NOT TARGET libcef_lib)
+        add_library(libcef_lib INTERFACE)
+        target_compile_definitions(libcef_lib INTERFACE
+            ${CEF_COMPILER_DEFINES}
+            $<$<CONFIG:Debug>:${CEF_COMPILER_DEFINES_DEBUG}>
+            $<$<CONFIG:Release>:${CEF_COMPILER_DEFINES_RELEASE}>)
+        target_include_directories(libcef_lib SYSTEM INTERFACE ${CEF_INCLUDE_PATH})
+        target_link_libraries(libcef_lib INTERFACE ${CEF_STANDARD_LIBS})
+    endif()
+
+    # Lito asset sets contain regular files, not directories. Export every
+    # file below the framework while preserving the framework-relative paths.
+    # The macOS loader and the CEF framework's install name both expect this
+    # directory next to the application bundle's Frameworks directory.
+    file(GLOB_RECURSE _weweb_cef_framework_files
+        LIST_DIRECTORIES false
+        RELATIVE "${CEF_BINARY_DIR}"
+        "${CEF_BINARY_DIR}/Chromium Embedded Framework.framework/*")
+    if(NOT _weweb_cef_framework_files)
+        message(FATAL_ERROR "weweb: macOS CEF framework contains no runtime files")
+    endif()
+    if(COMMAND lito_export_asset_set)
+        lito_export_asset_set(
+            NAME runtime
+            ROOT "${CEF_BINARY_DIR}"
+            FILES ${_weweb_cef_framework_files})
+
+        # A Waywallen renderer is launched as a flat executable rather than as
+        # a .app bundle. Chromium's ANGLE loader resolves these libraries next
+        # to that executable in the flat layout, so publish the same files at
+        # the asset-set root in addition to their framework locations.
+        file(GLOB _weweb_cef_flat_library_files
+            LIST_DIRECTORIES false
+            RELATIVE "${CEF_BINARY_DIR}/Chromium Embedded Framework.framework/Libraries"
+            "${CEF_BINARY_DIR}/Chromium Embedded Framework.framework/Libraries/*")
+        lito_export_asset_set(
+            NAME runtime
+            ROOT "${CEF_BINARY_DIR}/Chromium Embedded Framework.framework/Libraries"
+            FILES ${_weweb_cef_flat_library_files})
+    endif()
+    return()
 endif()
 
 if(NOT TARGET libcef_lib)

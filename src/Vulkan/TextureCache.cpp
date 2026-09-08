@@ -5,6 +5,11 @@ module;
 #include "vvk/macros.hpp"
 
 #include <unistd.h>
+#if defined(__APPLE__)
+#    include <array>
+#    include <vulkan/vulkan.h>
+#    include <vulkan/vulkan_metal.h>
+#endif
 
 module wescene.vulkan;
 import wescene.core;
@@ -615,6 +620,9 @@ private:
 wavsen::video::HwAccel ParseHwdec(std::string_view value) {
     if (value == "vulkan") return wavsen::video::HwAccel::Vulkan;
     if (value == "vaapi") return wavsen::video::HwAccel::Vaapi;
+#if defined(__APPLE__)
+    if (value == "videotoolbox") return wavsen::video::HwAccel::VideoToolbox;
+#endif
     if (value == "none") return wavsen::video::HwAccel::None;
     return wavsen::video::HwAccel::Auto;
 }
@@ -624,6 +632,7 @@ const char* HwdecLabel(wavsen::video::HwAccel h) {
     case wavsen::video::HwAccel::Auto: return "auto";
     case wavsen::video::HwAccel::Vulkan: return "vulkan";
     case wavsen::video::HwAccel::Vaapi: return "vaapi";
+    case wavsen::video::HwAccel::VideoToolbox: return "videotoolbox";
     case wavsen::video::HwAccel::None: return "none";
     }
     return "?";
@@ -634,6 +643,7 @@ const char* FrameKindLabel(wavsen::video::FrameKind k) {
     case wavsen::video::FrameKind::Sw: return "sw";
     case wavsen::video::FrameKind::VulkanShared: return "vulkan-shared";
     case wavsen::video::FrameKind::VaapiDrm: return "vaapi-drm";
+    case wavsen::video::FrameKind::VideoToolbox: return "videotoolbox";
     }
     return "?";
 }
@@ -678,6 +688,81 @@ void CloseSyncFd(int fd) {
     if (fd >= 0) ::close(fd);
 }
 
+#if defined(__APPLE__)
+void* ExportMetalDeviceHandle(const Device& device) {
+    auto export_metal_objects = reinterpret_cast<PFN_vkExportMetalObjectsEXT>(
+        device.handle().Dispatch().vkGetDeviceProcAddr(*device.handle(),
+                                                       "vkExportMetalObjectsEXT"));
+    if (export_metal_objects == nullptr) return nullptr;
+
+    VkExportMetalDeviceInfoEXT device_info {
+        .sType = VK_STRUCTURE_TYPE_EXPORT_METAL_DEVICE_INFO_EXT,
+        .pNext = nullptr,
+    };
+    VkExportMetalObjectsInfoEXT export_info {
+        .sType = VK_STRUCTURE_TYPE_EXPORT_METAL_OBJECTS_INFO_EXT,
+        .pNext = &device_info,
+    };
+    export_metal_objects(*device.handle(), &export_info);
+    return device_info.mtlDevice;
+}
+
+Option<ExImageParameters> CreateImportedMetalTextureImage(
+    const Device& device, void* metal_texture, rstd::uint32_t width, rstd::uint32_t height,
+    VkFormat           format = VK_FORMAT_B8G8R8A8_UNORM,
+    VkImageUsageFlags  usage  = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+    VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT) {
+    if (metal_texture == nullptr || width == 0 || height == 0) return None();
+
+    ExImageParameters           image;
+    VkImportMetalTextureInfoEXT import_info {
+        .sType      = VK_STRUCTURE_TYPE_IMPORT_METAL_TEXTURE_INFO_EXT,
+        .pNext      = nullptr,
+        .plane      = static_cast<VkImageAspectFlagBits>(aspect),
+        .mtlTexture = reinterpret_cast<MTLTexture_id>(metal_texture),
+    };
+    VkImageCreateInfo image_info {
+        .sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+        .pNext         = &import_info,
+        .imageType     = VK_IMAGE_TYPE_2D,
+        .format        = format,
+        .extent        = VkExtent3D { width, height, 1 },
+        .mipLevels     = 1,
+        .arrayLayers   = 1,
+        .samples       = VK_SAMPLE_COUNT_1_BIT,
+        .tiling        = VK_IMAGE_TILING_OPTIMAL,
+        .usage         = usage,
+        .sharingMode   = VK_SHARING_MODE_EXCLUSIVE,
+        .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+    };
+    if (device.handle().CreateImage(image_info, image.handle) != VK_SUCCESS) return None();
+    image.extent       = image_info.extent;
+    image.mipmap_level = 1;
+
+    VkImageViewCreateInfo view_info {
+        .sType    = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+        .pNext    = nullptr,
+        .image    = *image.handle,
+        .viewType = VK_IMAGE_VIEW_TYPE_2D,
+        .format   = format,
+        .subresourceRange =
+            VkImageSubresourceRange {
+                .aspectMask     = aspect,
+                .baseMipLevel   = 0,
+                .levelCount     = 1,
+                .baseArrayLayer = 0,
+                .layerCount     = 1,
+            },
+    };
+    if (device.handle().CreateImageView(view_info, image.view) != VK_SUCCESS) {
+        image.handle.reset();
+        return None();
+    }
+    return Some(rstd::move(image));
+}
+
+#endif
+
 } // anonymous namespace
 
 struct TextureCache::VideoRegistry {
@@ -688,7 +773,15 @@ struct TextureCache::VideoRegistry {
     rstd::uint32_t                        yuv_max_height { 0 };
 
     struct Runtime {
+        Runtime()                              = default;
+        Runtime(const Runtime&)                = delete;
+        Runtime& operator=(const Runtime&)     = delete;
+        Runtime(Runtime&&) noexcept            = default;
+        Runtime& operator=(Runtime&&) noexcept = default;
+        ~Runtime();
+
         VideoRegistry*                              registry { nullptr };
+        TextureCache*                               owner { nullptr };
         const Device*                               device { nullptr };
         String                                      key;
         rstd::uint32_t                              width { 0 };
@@ -697,10 +790,30 @@ struct TextureCache::VideoRegistry {
         Option<rstd::sync::Arc<VideoPlaybackState>> playback;
         Option<Box<wavsen::video::VideoDecoder>>    decoder;
         wavsen::video::Nv12Frame                    nv12_scratch;
-        f64                                         pts_acc {};
-        f64                                         last_pts { -1.0 };
-        bool                                        have_frame { false };
-        u64                                         applied_seek_sequence {};
+#if defined(__APPLE__)
+        struct AppleUploadSlot {
+            vvk::CommandBuffers          command_storage;
+            vvk::CommandBuffer           command;
+            vvk::Fence                   fence;
+            Option<ExImageParameters>    imported;
+            Option<vvk::SubmissionToken> conversion;
+            void*                        metal_texture { nullptr };
+            bool                         pending { false };
+        };
+
+        std::array<AppleUploadSlot, 3> apple_upload_slots;
+        std::size_t                    next_apple_upload_slot {};
+        void*                          metal_device { nullptr };
+        bool                           metal_device_queried { false };
+        bool                           prepare_apple_upload_slot(AppleUploadSlot&);
+        bool                           ensure_apple_upload_command(AppleUploadSlot&);
+        void                           retire_apple_upload_slot(AppleUploadSlot&);
+        bool upload_apple_frame(const wavsen::video::AppleFrameLease&, const ImageParameters&);
+#endif
+        f64  pts_acc {};
+        f64  last_pts { -1.0 };
+        bool have_frame { false };
+        u64  applied_seek_sequence {};
 
         void Pump(double dt_seconds);
     };
@@ -745,6 +858,227 @@ struct TextureCache::VideoRegistry {
     }
 };
 
+TextureCache::VideoRegistry::Runtime::~Runtime() {
+#if defined(__APPLE__)
+    for (auto& slot : apple_upload_slots) {
+        retire_apple_upload_slot(slot);
+        if (slot.metal_texture != nullptr) {
+            wavsen::video::release_apple_video_metal_texture(slot.metal_texture);
+            slot.metal_texture = nullptr;
+        }
+    }
+#endif
+}
+
+#if defined(__APPLE__)
+bool TextureCache::VideoRegistry::Runtime::prepare_apple_upload_slot(AppleUploadSlot& slot) {
+    retire_apple_upload_slot(slot);
+    return true;
+}
+
+bool TextureCache::VideoRegistry::Runtime::ensure_apple_upload_command(AppleUploadSlot& slot) {
+    if (! slot.command) {
+        if (device == nullptr) return false;
+        if (device->cmd_pool().Allocate(
+                usize(1), VK_COMMAND_BUFFER_LEVEL_PRIMARY, slot.command_storage) != VK_SUCCESS) {
+            return false;
+        }
+        slot.command =
+            vvk::CommandBuffer(slot.command_storage[usize()], device->handle().Dispatch());
+
+        VkFenceCreateInfo fence_info {
+            .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+            .pNext = nullptr,
+            .flags = 0,
+        };
+        if (device->handle().CreateFence(fence_info, slot.fence) != VK_SUCCESS) return false;
+    }
+    return true;
+}
+
+void TextureCache::VideoRegistry::Runtime::retire_apple_upload_slot(AppleUploadSlot& slot) {
+    if (slot.pending) {
+        VkResult result = slot.fence ? slot.fence.Wait() : VK_SUCCESS;
+        if (result != VK_SUCCESS && device != nullptr) {
+            rstd_warn("PumpVideoTextures[{}]: video upload fence wait failed ({}), draining device",
+                      key.as_str(),
+                      static_cast<int>(result));
+            (void)device->handle().WaitIdle();
+        }
+        if (slot.fence) (void)slot.fence.Reset();
+        slot.pending = false;
+    }
+    if (slot.conversion.is_some()) {
+        bool completed = false;
+        if (registry != nullptr && registry->yuv.is_some()) {
+            const auto observation =
+                (*registry->yuv)->wait_completion(*slot.conversion, u64(0xffffffffffffffffull));
+            completed = observation.observed() && observation.completed.valid() &&
+                        vvk::CompletionCovers(observation.completed, *slot.conversion);
+            if (! completed && device != nullptr) {
+                rstd_warn(
+                    "PumpVideoTextures[{}]: external NV12 conversion wait failed, draining device",
+                    key.as_str());
+                (void)device->handle().WaitIdle();
+            }
+            (void)(*registry->yuv)->reclaim_submissions();
+        }
+        if (! completed && device != nullptr && (registry == nullptr || registry->yuv.is_none())) {
+            (void)device->handle().WaitIdle();
+        }
+        (void)slot.conversion.take();
+    }
+    (void)slot.imported.take();
+}
+
+bool TextureCache::VideoRegistry::Runtime::upload_apple_frame(
+    const wavsen::video::AppleFrameLease& frame, const ImageParameters& target) {
+    if (owner == nullptr || device == nullptr || ! frame.valid()) return false;
+    if (metal_device == nullptr && ! metal_device_queried) {
+        metal_device         = ExportMetalDeviceHandle(*device);
+        metal_device_queried = true;
+    }
+    if (metal_device == nullptr) {
+        rstd_error("PumpVideoTextures[{}]: VK_EXT_metal_objects did not expose an MTLDevice",
+                   key.as_str());
+        return false;
+    }
+
+    auto& slot = apple_upload_slots[next_apple_upload_slot++ % apple_upload_slots.size()];
+    if (! prepare_apple_upload_slot(slot)) {
+        rstd_error("PumpVideoTextures[{}]: failed to prepare asynchronous video upload slot",
+                   key.as_str());
+        return false;
+    }
+
+    if (! ensure_apple_upload_command(slot)) {
+        rstd_error("PumpVideoTextures[{}]: failed to allocate BGRA upload command", key.as_str());
+        return false;
+    }
+
+    void* previous_metal_texture = slot.metal_texture;
+    auto  texture_result         = wavsen::video::create_apple_video_metal_texture(
+        frame, metal_device, previous_metal_texture);
+    if (texture_result.is_err()) {
+        rstd_error("PumpVideoTextures[{}]: VideoToolbox Metal texture: {}",
+                   key.as_str(),
+                   texture_result.unwrap_err().message);
+        return false;
+    }
+    void* metal_texture = rstd::move(texture_result).unwrap();
+    if (previous_metal_texture != nullptr && previous_metal_texture != metal_texture) {
+        wavsen::video::release_apple_video_metal_texture(previous_metal_texture);
+    }
+    slot.metal_texture = metal_texture;
+    auto imported      = CreateImportedMetalTextureImage(*device,
+                                                         metal_texture,
+                                                         frame.view().width.to_primitive(),
+                                                         frame.view().height.to_primitive());
+    if (imported.is_none()) {
+        retire_apple_upload_slot(slot);
+        rstd_error("PumpVideoTextures[{}]: failed to import Metal video texture into Vulkan",
+                   key.as_str());
+        return false;
+    }
+    slot.imported = Some(rstd::move(imported).unwrap());
+    auto& cmd     = slot.command;
+    if (cmd.Begin(VkCommandBufferBeginInfo {
+            .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+            .pNext = nullptr,
+            .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+        }) != VK_SUCCESS) {
+        retire_apple_upload_slot(slot);
+        return false;
+    }
+
+    VkImageSubresourceRange range {
+        .aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT,
+        .baseMipLevel   = 0,
+        .levelCount     = 1,
+        .baseArrayLayer = 0,
+        .layerCount     = 1,
+    };
+    VkImageMemoryBarrier imported_to_src {
+        .sType            = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+        .srcAccessMask    = 0,
+        .dstAccessMask    = VK_ACCESS_TRANSFER_READ_BIT,
+        .oldLayout        = VK_IMAGE_LAYOUT_UNDEFINED,
+        .newLayout        = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+        .image            = *slot.imported->handle,
+        .subresourceRange = range,
+    };
+    VkImageMemoryBarrier target_to_dst {
+        .sType            = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+        .srcAccessMask    = VK_ACCESS_SHADER_READ_BIT,
+        .dstAccessMask    = VK_ACCESS_TRANSFER_WRITE_BIT,
+        .oldLayout        = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+        .newLayout        = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        .image            = target.handle,
+        .subresourceRange = range,
+    };
+    cmd.PipelineBarrier(
+        VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, imported_to_src);
+    cmd.PipelineBarrier(
+        VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, target_to_dst);
+
+    VkImageBlit blit {
+        .srcSubresource =
+            VkImageSubresourceLayers {
+                .aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT,
+                .mipLevel       = 0,
+                .baseArrayLayer = 0,
+                .layerCount     = 1,
+            },
+        .srcOffsets = { VkOffset3D { 0, 0, 0 },
+                        VkOffset3D { static_cast<int>(frame.view().width.to_primitive()),
+                                     static_cast<int>(frame.view().height.to_primitive()),
+                                     1 } },
+        .dstSubresource =
+            VkImageSubresourceLayers {
+                .aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT,
+                .mipLevel       = 0,
+                .baseArrayLayer = 0,
+                .layerCount     = 1,
+            },
+        .dstOffsets = { VkOffset3D { 0, 0, 0 },
+                        VkOffset3D { static_cast<int>(width), static_cast<int>(height), 1 } },
+    };
+    cmd.BlitImage(*slot.imported->handle,
+                  VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                  target.handle,
+                  VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                  blit,
+                  VK_FILTER_LINEAR);
+    VkImageMemoryBarrier target_to_shader {
+        .sType            = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+        .srcAccessMask    = VK_ACCESS_TRANSFER_WRITE_BIT,
+        .dstAccessMask    = VK_ACCESS_SHADER_READ_BIT,
+        .oldLayout        = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        .newLayout        = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+        .image            = target.handle,
+        .subresourceRange = range,
+    };
+    cmd.PipelineBarrier(
+        VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, target_to_shader);
+    if (cmd.End() != VK_SUCCESS) {
+        retire_apple_upload_slot(slot);
+        return false;
+    }
+    VkSubmitInfo submit {
+        .sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+        .pNext              = nullptr,
+        .commandBufferCount = 1,
+        .pCommandBuffers    = cmd.address(),
+    };
+    if (device->graphics_queue().handle.Submit(submit, *slot.fence) != VK_SUCCESS) {
+        retire_apple_upload_slot(slot);
+        return false;
+    }
+    slot.pending = true;
+    return true;
+}
+#endif
+
 namespace rstd
 {
 
@@ -778,6 +1112,7 @@ TextureCache::CreateVideoTex(const Image&                                image,
 
     VideoRegistry::Runtime runtime;
     runtime.registry = registry;
+    runtime.owner    = this;
     runtime.device   = &m_device;
     runtime.key      = String::make(rstd::cppstd::as_str(image.key).unwrap());
     runtime.playback = rstd::move(playback);
@@ -825,8 +1160,9 @@ TextureCache::CreateVideoTex(const Image&                                image,
     auto target_image = std::move(*img_opt);
     AssignImageGeneration(target_image);
     runtime.target = ToImageParameters(target_image);
-
+#if ! defined(__APPLE__)
     if (! registry->ensureYuv(m_device, runtime.width, runtime.height)) return None();
+#endif
 
     /* 2) Initial layout: UNDEFINED → TRANSFER_DST → clear black →
      * SHADER_READ_ONLY. Mirrors the one-shot pattern used by the
@@ -893,7 +1229,12 @@ TextureCache::CreateVideoTex(const Image&                                image,
         String::make(rstd::cppstd::as_str(registry->options.render_node).unwrap()),
     };
     const wavsen::video::Producer* producer = nullptr;
-    if (requested_hwdec != wavsen::video::HwAccel::None) {
+#if defined(__APPLE__)
+    const bool needs_shared_vulkan = requested_hwdec == wavsen::video::HwAccel::Vulkan;
+#else
+    const bool needs_shared_vulkan = requested_hwdec != wavsen::video::HwAccel::None;
+#endif
+    if (needs_shared_vulkan) {
         producer = registry->ensureProducer(m_device, runtime.width, runtime.height);
         if (! producer) opts.hwaccel = wavsen::video::HwAccel::None;
     }
@@ -910,6 +1251,12 @@ TextureCache::CreateVideoTex(const Image&                                image,
         return None();
     }
     runtime.decoder = rstd::Some(std::move(dec_r).unwrap());
+#if defined(__APPLE__)
+    if ((*runtime.decoder)->kind() != wavsen::video::FrameKind::VideoToolbox &&
+        ! registry->ensureYuv(m_device, runtime.width, runtime.height)) {
+        return None();
+    }
+#endif
     if (runtime.playback.is_some()) {
         (*runtime.playback)->PublishTime(f64(), (*runtime.decoder)->duration());
     }
@@ -958,17 +1305,20 @@ void TextureCache::VideoRegistry::Runtime::Pump(double dt_seconds) {
         dt_seconds *= state.rate.to_primitive();
     }
     s.pts_acc += f64(dt_seconds);
-    auto* yuv = registry->ensureYuv(*device, s.width, s.height);
-    if (! yuv) {
+    ImageParameters ip = s.target;
+
+    const auto                fkind = (*s.decoder)->kind();
+    wavsen::video::YuvToRgba* yuv   = nullptr;
+    if (fkind != wavsen::video::FrameKind::VideoToolbox) {
+        yuv = registry->ensureYuv(*device, s.width, s.height);
+    }
+    if (! yuv && fkind != wavsen::video::FrameKind::VideoToolbox) {
         publish_time();
         return;
     }
-
-    ImageParameters ip = s.target;
-
-    const auto                             fkind = (*s.decoder)->kind();
     Option<wavsen::video::VkFrameLease>    vulkan_frame;
     Option<wavsen::video::VaapiFrameLease> vaapi_frame;
+    Option<wavsen::video::AppleFrameLease> apple_frame;
 
     /* Drain decoded frames until we catch up to wall time. Cap to
      * 4 frames per tick to avoid spiral-of-death on heavy stalls. */
@@ -998,6 +1348,17 @@ void TextureCache::VideoRegistry::Runtime::Pump(double dt_seconds) {
                 auto value  = rstd::move(pulled).unwrap();
                 r           = Ok(value.status);
                 vaapi_frame = rstd::move(value.frame);
+            }
+            break;
+        }
+        case wavsen::video::FrameKind::VideoToolbox: {
+            auto pulled = (*s.decoder)->next_apple_frame();
+            if (pulled.is_err()) {
+                r = Err(rstd::move(pulled).unwrap_err());
+            } else {
+                auto value = rstd::move(pulled).unwrap();
+                r          = Ok(value.status);
+                if (value.frame.is_some()) apple_frame = rstd::move(value.frame);
             }
             break;
         }
@@ -1037,6 +1398,15 @@ void TextureCache::VideoRegistry::Runtime::Pump(double dt_seconds) {
             }
             frame_pts = vaapi_frame->view().pts_seconds;
             break;
+        case wavsen::video::FrameKind::VideoToolbox:
+            if (apple_frame.is_none()) {
+                rstd_error("PumpVideoTextures[{}]: VideoToolbox decode returned no frame lease",
+                           s.key.as_str());
+                publish_time();
+                return;
+            }
+            frame_pts = apple_frame->view().pts_seconds;
+            break;
         case wavsen::video::FrameKind::Sw: frame_pts = s.nv12_scratch.pts_seconds; break;
         }
         if (decoder_looped) s.pts_acc = frame_pts.max(f64());
@@ -1063,6 +1433,10 @@ void TextureCache::VideoRegistry::Runtime::Pump(double dt_seconds) {
     case wavsen::video::FrameKind::VaapiDrm:
         cs_id = vaapi_frame->view().colorspace;
         cr_id = vaapi_frame->view().color_range;
+        break;
+    case wavsen::video::FrameKind::VideoToolbox:
+        cs_id = apple_frame->view().colorspace;
+        cr_id = apple_frame->view().color_range;
         break;
     case wavsen::video::FrameKind::Sw:
         cs_id = s.nv12_scratch.colorspace;
@@ -1141,6 +1515,18 @@ void TextureCache::VideoRegistry::Runtime::Pump(double dt_seconds) {
         cv = Ok(value->sync_fd);
         break;
     }
+    case wavsen::video::FrameKind::VideoToolbox:
+#if defined(__APPLE__)
+        if (apple_frame.is_none() || ! s.upload_apple_frame(*apple_frame, ip)) {
+            cv = Err(wavsen::video::Error(rstd::format("VideoToolbox Metal→Vulkan copy failed")));
+        } else {
+            cv = Ok(-1);
+        }
+#else
+        cv = Err(wavsen::video::Error(
+            rstd::format("VideoToolbox is only available on Apple platforms")));
+#endif
+        break;
     case wavsen::video::FrameKind::Sw:
         cv = yuv->convert_nv12(ip.handle,
                                u32(s.width),

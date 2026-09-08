@@ -1362,7 +1362,8 @@ void SceneRuntimeController::loadScene() {
                 .shader_cache_dir = rstd::move(shader_cache_dir),
                 .capabilities =
                     SceneParseCapabilities {
-                        .directional_shadow = m_render_capabilities->directional_shadow(),
+                        .directional_shadow        = m_render_capabilities->directional_shadow(),
+                        .geometry_shader_supported = m_render_capabilities->geometry_shader,
                         .max_geometry_output_vertices =
                             u32(m_render_capabilities->max_geometry_output_vertices),
                         .max_geometry_total_output_components =

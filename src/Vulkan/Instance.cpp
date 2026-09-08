@@ -3,6 +3,11 @@ module;
 #include <rstd/macro.hpp>
 #include "vvk/macros.hpp"
 
+#if defined(__APPLE__)
+#    include <vulkan/vulkan.h>
+#    include <vulkan/vulkan_metal.h>
+#endif
+
 module wescene.vulkan;
 import wescene.core;
 import wescene.types;
@@ -15,8 +20,18 @@ using namespace owe::vulkan;
 
 constexpr rstd::array<InstanceLayer, 0> base_inst_layers {};
 
+// VK_EXT_debug_utils is required everywhere. MoltenVK additionally needs
+// portability enumeration; keep that extension Apple-only so Linux keeps its
+// original instance extension set and create flags.
+#if defined(__APPLE__)
+constexpr rstd::array<Extension, 2> base_inst_exts {
+    Extension { true, VK_EXT_DEBUG_UTILS_EXTENSION_NAME },
+    Extension { false, "VK_KHR_portability_enumeration" }
+};
+#else
 constexpr rstd::array<Extension, 1> base_inst_exts { Extension {
     true, VK_EXT_DEBUG_UTILS_EXTENSION_NAME } };
+#endif
 
 namespace
 {
@@ -73,13 +88,29 @@ VkResult CreatInstance(vvk::Instance* inst, std::span<const std::string_view> ex
             return layer.data();
         });
 
+    // VK_EXT_metal_objects requires the instance to opt in to the Metal
+    // object type before vkExportMetalObjectsEXT can return the MTLDevice.
+    // Keep this pNext optional so the same instance path remains valid on
+    // non-Apple Vulkan implementations.
+#if defined(__APPLE__)
+    VkExportMetalObjectCreateInfoEXT metal_export_info {
+        .sType            = VK_STRUCTURE_TYPE_EXPORT_METAL_OBJECT_CREATE_INFO_EXT,
+        .pNext            = nullptr,
+        .exportObjectType = VK_EXPORT_METAL_OBJECT_TYPE_METAL_DEVICE_BIT_EXT,
+    };
+    const void* instance_next = &metal_export_info;
+#else
+    const void* instance_next = nullptr;
+#endif
+
     return vvk::Instance::Create(
         *inst,
         app_info,
         rstd::slice<const char*>::from_raw_parts(layer_names_c.data(), usize(layer_names_c.size())),
         rstd::slice<const char*>::from_raw_parts(extension_names_c.data(),
                                                  usize(extension_names_c.size())),
-        dld);
+        dld,
+        instance_next);
 }
 void EnumateExts(owe::Set<std::string>& set, const vvk::InstanceDispatch& dld) {
     if (auto rv = vvk::EnumerateInstanceExtensionProperties(dld); rv.is_some()) {

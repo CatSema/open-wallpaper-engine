@@ -1,6 +1,7 @@
 module;
 
 #include <cstdio>
+#include <cstring>
 #include <unistd.h>
 
 #define GLFW_INCLUDE_VULKAN
@@ -34,6 +35,16 @@ namespace
 
 constexpr std::uint64_t kFenceTimeoutNs = 5'000'000'000ull; // 5s
 
+#if defined(__APPLE__)
+constexpr const char* kPortabilitySubsetExtension = "VK_KHR_portability_subset";
+
+bool HasInstanceExtension(const std::vector<VkExtensionProperties>& extensions, const char* name) {
+    return std::any_of(extensions.begin(), extensions.end(), [name](const auto& extension) {
+        return std::strcmp(extension.extensionName, name) == 0;
+    });
+}
+#endif
+
 VkFormat FormatToVk(DmaBufFormat f) {
     switch (f) {
     case DmaBufFormat::BGRA8_UNORM: return VK_FORMAT_B8G8R8A8_UNORM;
@@ -57,6 +68,9 @@ bool VulkanBlitter::Init(GLFWwindow* window) {
 void VulkanBlitter::Shutdown() {
     if (device_) vkDeviceWaitIdle(device_);
 
+#if defined(__APPLE__)
+    DestroyCpuStaging();
+#endif
     DestroyOwnedImage();
 
     for (auto& s : img_avail_sem_)
@@ -110,11 +124,30 @@ bool VulkanBlitter::CreateInstance() {
         return false;
     }
 
+    std::vector<VkExtensionProperties> available_exts;
+    std::uint32_t                      available_count = 0;
+    VK_CHECK(vkEnumerateInstanceExtensionProperties(nullptr, &available_count, nullptr));
+    available_exts.resize(available_count);
+    VK_CHECK(
+        vkEnumerateInstanceExtensionProperties(nullptr, &available_count, available_exts.data()));
+
+    std::vector<const char*> enabled_exts(glfw_exts, glfw_exts + glfw_count);
+#if defined(__APPLE__)
+    if (HasInstanceExtension(available_exts, VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME)) {
+        enabled_exts.push_back(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
+    }
+#endif
+
     VkInstanceCreateInfo ci {};
     ci.sType                   = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
     ci.pApplicationInfo        = &app;
-    ci.enabledExtensionCount   = glfw_count;
-    ci.ppEnabledExtensionNames = glfw_exts;
+    ci.enabledExtensionCount   = static_cast<std::uint32_t>(enabled_exts.size());
+    ci.ppEnabledExtensionNames = enabled_exts.data();
+#if defined(__APPLE__)
+    if (HasInstanceExtension(available_exts, VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME)) {
+        ci.flags |= VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
+    }
+#endif
 
     VK_CHECK(vkCreateInstance(&ci, nullptr, &instance_));
     return true;
@@ -151,11 +184,20 @@ bool VulkanBlitter::PickPhysicalDevice() {
             vkEnumerateDeviceExtensionProperties(pd, nullptr, &ecount, nullptr);
             std::vector<VkExtensionProperties> exts(ecount);
             vkEnumerateDeviceExtensionProperties(pd, nullptr, &ecount, exts.data());
+#if defined(__APPLE__)
+            bool has_swapchain          = false;
+            bool has_portability_subset = false;
+#else
             bool has_swapchain = false, has_ext_mem_fd = false, has_dma_buf = false,
                  has_modifier = false, has_fmt_list = false;
+#endif
             for (auto& e : exts) {
                 if (std::strcmp(e.extensionName, VK_KHR_SWAPCHAIN_EXTENSION_NAME) == 0)
                     has_swapchain = true;
+#if defined(__APPLE__)
+                if (std::strcmp(e.extensionName, kPortabilitySubsetExtension) == 0)
+                    has_portability_subset = true;
+#else
                 if (std::strcmp(e.extensionName, VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME) == 0)
                     has_ext_mem_fd = true;
                 if (std::strcmp(e.extensionName, VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME) ==
@@ -166,10 +208,16 @@ bool VulkanBlitter::PickPhysicalDevice() {
                     has_modifier = true;
                 if (std::strcmp(e.extensionName, VK_KHR_IMAGE_FORMAT_LIST_EXTENSION_NAME) == 0)
                     has_fmt_list = true;
+#endif
             }
+#if defined(__APPLE__)
+            if (! has_swapchain) continue;
+            portability_subset_supported_ = has_portability_subset;
+#else
             if (! has_swapchain || ! has_ext_mem_fd || ! has_dma_buf || ! has_modifier ||
                 ! has_fmt_list)
                 continue;
+#endif
 
             phys_         = pd;
             queue_family_ = i;
@@ -177,9 +225,13 @@ bool VulkanBlitter::PickPhysicalDevice() {
             return true;
         }
     }
+#if defined(__APPLE__)
+    std::fprintf(stderr, "weweb: no suitable Vulkan device with graphics/present support\n");
+#else
     std::fprintf(stderr,
                  "weweb: no suitable Vulkan device "
                  "(need swapchain + external_memory_fd + dma_buf)\n");
+#endif
     return false;
 }
 
@@ -191,6 +243,12 @@ bool VulkanBlitter::CreateDevice() {
     qi.queueCount       = 1;
     qi.pQueuePriorities = &prio;
 
+#if defined(__APPLE__)
+    std::vector<const char*> dev_exts { VK_KHR_SWAPCHAIN_EXTENSION_NAME };
+    if (portability_subset_supported_) {
+        dev_exts.push_back(kPortabilitySubsetExtension);
+    }
+#else
     const char* dev_exts[] = {
         VK_KHR_SWAPCHAIN_EXTENSION_NAME,
         VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME,
@@ -200,24 +258,214 @@ bool VulkanBlitter::CreateDevice() {
         VK_KHR_IMAGE_FORMAT_LIST_EXTENSION_NAME,
         VK_EXT_IMAGE_DRM_FORMAT_MODIFIER_EXTENSION_NAME,
     };
+#endif
     VkDeviceCreateInfo ci {};
-    ci.sType                   = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-    ci.queueCreateInfoCount    = 1;
-    ci.pQueueCreateInfos       = &qi;
-    ci.enabledExtensionCount   = static_cast<std::uint32_t>(std::size(dev_exts));
+    ci.sType                 = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+    ci.queueCreateInfoCount  = 1;
+    ci.pQueueCreateInfos     = &qi;
+    ci.enabledExtensionCount = static_cast<std::uint32_t>(std::size(dev_exts));
+#if defined(__APPLE__)
+    ci.ppEnabledExtensionNames = dev_exts.data();
+#else
     ci.ppEnabledExtensionNames = dev_exts;
+#endif
 
     VK_CHECK(vkCreateDevice(phys_, &ci, nullptr, &device_));
     vkGetDeviceQueue(device_, queue_family_, 0, &queue_);
 
+#if ! defined(__APPLE__)
     pfn_GetMemoryFdProperties_ = reinterpret_cast<PFN_vkGetMemoryFdPropertiesKHR>(
         vkGetDeviceProcAddr(device_, "vkGetMemoryFdPropertiesKHR"));
     if (! pfn_GetMemoryFdProperties_) {
         std::fprintf(stderr, "weweb: vkGetMemoryFdPropertiesKHR not available\n");
         return false;
     }
+#endif
     return true;
 }
+
+#if defined(__APPLE__)
+bool VulkanBlitter::EnsureCpuStaging(std::size_t size) {
+    if (size == 0) return false;
+    if (cpu_staging_ != VK_NULL_HANDLE && cpu_staging_size_ >= size) return true;
+
+    DestroyCpuStaging();
+
+    VkBufferCreateInfo buffer_info {};
+    buffer_info.sType       = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    buffer_info.size        = static_cast<VkDeviceSize>(size);
+    buffer_info.usage       = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+    buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    if (vkCreateBuffer(device_, &buffer_info, nullptr, &cpu_staging_) != VK_SUCCESS) {
+        std::fprintf(stderr, "weweb: failed to create CPU paint staging buffer\n");
+        return false;
+    }
+
+    VkMemoryRequirements requirements {};
+    vkGetBufferMemoryRequirements(device_, cpu_staging_, &requirements);
+    std::uint32_t memory_type =
+        FindMemoryType(requirements.memoryTypeBits,
+                       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    cpu_staging_coherent_ = memory_type != UINT32_MAX;
+    if (! cpu_staging_coherent_) {
+        memory_type =
+            FindMemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
+    }
+    if (memory_type == UINT32_MAX) {
+        std::fprintf(stderr, "weweb: no host-visible memory for CPU paint staging\n");
+        vkDestroyBuffer(device_, cpu_staging_, nullptr);
+        cpu_staging_ = VK_NULL_HANDLE;
+        return false;
+    }
+
+    VkMemoryAllocateInfo allocate_info {};
+    allocate_info.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocate_info.allocationSize  = requirements.size;
+    allocate_info.memoryTypeIndex = memory_type;
+    if (vkAllocateMemory(device_, &allocate_info, nullptr, &cpu_staging_mem_) != VK_SUCCESS) {
+        std::fprintf(stderr, "weweb: failed to allocate CPU paint staging memory\n");
+        vkDestroyBuffer(device_, cpu_staging_, nullptr);
+        cpu_staging_ = VK_NULL_HANDLE;
+        return false;
+    }
+    if (vkBindBufferMemory(device_, cpu_staging_, cpu_staging_mem_, 0) != VK_SUCCESS ||
+        vkMapMemory(device_, cpu_staging_mem_, 0, requirements.size, 0, &cpu_staging_mapped_) !=
+            VK_SUCCESS) {
+        std::fprintf(stderr, "weweb: failed to map CPU paint staging memory\n");
+        if (cpu_staging_mapped_ != nullptr) vkUnmapMemory(device_, cpu_staging_mem_);
+        vkFreeMemory(device_, cpu_staging_mem_, nullptr);
+        vkDestroyBuffer(device_, cpu_staging_, nullptr);
+        cpu_staging_mem_    = VK_NULL_HANDLE;
+        cpu_staging_        = VK_NULL_HANDLE;
+        cpu_staging_mapped_ = nullptr;
+        return false;
+    }
+    cpu_staging_size_ = requirements.size;
+    return true;
+}
+
+void VulkanBlitter::DestroyCpuStaging() {
+    if (cpu_staging_mapped_ != nullptr && cpu_staging_mem_ != VK_NULL_HANDLE) {
+        vkUnmapMemory(device_, cpu_staging_mem_);
+    }
+    cpu_staging_mapped_ = nullptr;
+    if (cpu_staging_ != VK_NULL_HANDLE) {
+        vkDestroyBuffer(device_, cpu_staging_, nullptr);
+        cpu_staging_ = VK_NULL_HANDLE;
+    }
+    if (cpu_staging_mem_ != VK_NULL_HANDLE) {
+        vkFreeMemory(device_, cpu_staging_mem_, nullptr);
+        cpu_staging_mem_ = VK_NULL_HANDLE;
+    }
+    cpu_staging_size_     = 0;
+    cpu_staging_coherent_ = false;
+}
+
+bool VulkanBlitter::UploadPendingCpuPaint() {
+    std::lock_guard lock(cpu_paint_mutex_);
+    if (! cpu_paint_pending_) return true;
+    const auto staging_size = static_cast<std::size_t>(cpu_paint_width_) * 4u *
+                              static_cast<std::size_t>(cpu_paint_height_);
+    if (! EnsureOwnedImage(cpu_paint_width_, cpu_paint_height_) ||
+        ! EnsureCpuStaging(staging_size)) {
+        return false;
+    }
+    std::memcpy(cpu_staging_mapped_, cpu_paint_data_.data(), staging_size);
+    if (! CopyCpuStagingToOwned(cpu_paint_width_, cpu_paint_height_)) return false;
+    cpu_paint_pending_ = false;
+    return true;
+}
+
+bool VulkanBlitter::CopyCpuStagingToOwned(int width, int height) {
+    if (cpu_staging_ == VK_NULL_HANDLE || owned_image_ == VK_NULL_HANDLE || width <= 0 ||
+        height <= 0) {
+        return false;
+    }
+    if (! cpu_staging_coherent_) {
+        VkMappedMemoryRange range {};
+        range.sType  = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE;
+        range.memory = cpu_staging_mem_;
+        range.size   = VK_WHOLE_SIZE;
+        if (vkFlushMappedMemoryRanges(device_, 1, &range) != VK_SUCCESS) return false;
+    }
+    if (vkWaitForFences(device_, 1, &in_flight_fence_[0], VK_TRUE, kFenceTimeoutNs) != VK_SUCCESS ||
+        vkWaitForFences(device_, 1, &in_flight_fence_[1], VK_TRUE, kFenceTimeoutNs) != VK_SUCCESS) {
+        std::fprintf(stderr, "weweb: timed out waiting for the CPU paint copy\n");
+        return false;
+    }
+
+    VkCommandBuffer cmd = cmd_bufs_[0];
+    vkResetCommandBuffer(cmd, 0);
+    VkCommandBufferBeginInfo begin_info {};
+    begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    if (vkBeginCommandBuffer(cmd, &begin_info) != VK_SUCCESS) return false;
+
+    VkImageMemoryBarrier destination_barrier {};
+    destination_barrier.sType                       = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    destination_barrier.oldLayout                   = owned_layout_;
+    destination_barrier.newLayout                   = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    destination_barrier.srcQueueFamilyIndex         = VK_QUEUE_FAMILY_IGNORED;
+    destination_barrier.dstQueueFamilyIndex         = VK_QUEUE_FAMILY_IGNORED;
+    destination_barrier.image                       = owned_image_;
+    destination_barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    destination_barrier.subresourceRange.levelCount = 1;
+    destination_barrier.subresourceRange.layerCount = 1;
+    destination_barrier.srcAccessMask =
+        owned_layout_ == VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL ? VK_ACCESS_TRANSFER_READ_BIT : 0;
+    destination_barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    vkCmdPipelineBarrier(cmd,
+                         VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         0,
+                         0,
+                         nullptr,
+                         0,
+                         nullptr,
+                         1,
+                         &destination_barrier);
+
+    VkBufferImageCopy region {};
+    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    region.imageSubresource.layerCount = 1;
+    region.imageExtent                 = { static_cast<std::uint32_t>(width),
+                                           static_cast<std::uint32_t>(height),
+                                           1 };
+    vkCmdCopyBufferToImage(
+        cmd, cpu_staging_, owned_image_, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+
+    VkImageMemoryBarrier source_barrier = destination_barrier;
+    source_barrier.oldLayout            = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    source_barrier.newLayout            = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    source_barrier.srcAccessMask        = VK_ACCESS_TRANSFER_WRITE_BIT;
+    source_barrier.dstAccessMask        = VK_ACCESS_TRANSFER_READ_BIT;
+    vkCmdPipelineBarrier(cmd,
+                         VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         0,
+                         0,
+                         nullptr,
+                         0,
+                         nullptr,
+                         1,
+                         &source_barrier);
+
+    if (vkEndCommandBuffer(cmd) != VK_SUCCESS) return false;
+    vkResetFences(device_, 1, &in_flight_fence_[0]);
+    VkSubmitInfo submit {};
+    submit.sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submit.commandBufferCount = 1;
+    submit.pCommandBuffers    = &cmd;
+    if (vkQueueSubmit(queue_, 1, &submit, in_flight_fence_[0]) != VK_SUCCESS) return false;
+    if (vkWaitForFences(device_, 1, &in_flight_fence_[0], VK_TRUE, kFenceTimeoutNs) != VK_SUCCESS) {
+        std::fprintf(stderr, "weweb: timed out waiting for the CPU paint copy completion\n");
+        return false;
+    }
+    owned_layout_   = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    owned_has_data_ = true;
+    return true;
+}
+#endif
 
 bool VulkanBlitter::CreateCommandPool() {
     VkCommandPoolCreateInfo ci {};
@@ -353,6 +601,22 @@ bool VulkanBlitter::EnsureOwnedImage(int width, int height) {
     if (owned_image_ != VK_NULL_HANDLE && owned_width_ == width && owned_height_ == height) {
         return true;
     }
+#if defined(__APPLE__)
+    if (owned_image_ != VK_NULL_HANDLE) {
+        if (in_flight_fence_[0] != VK_NULL_HANDLE &&
+            vkWaitForFences(device_, 1, &in_flight_fence_[0], VK_TRUE, kFenceTimeoutNs) !=
+                VK_SUCCESS) {
+            std::fprintf(stderr, "weweb: timed out waiting for the old CPU paint image\n");
+            return false;
+        }
+        if (in_flight_fence_[1] != VK_NULL_HANDLE &&
+            vkWaitForFences(device_, 1, &in_flight_fence_[1], VK_TRUE, kFenceTimeoutNs) !=
+                VK_SUCCESS) {
+            std::fprintf(stderr, "weweb: timed out waiting for the old presented image\n");
+            return false;
+        }
+    }
+#endif
     DestroyOwnedImage();
 
     VkImageCreateInfo ii {};
@@ -401,6 +665,38 @@ void VulkanBlitter::DestroyOwnedImage() {
     owned_width_ = owned_height_ = 0;
     owned_layout_                = VK_IMAGE_LAYOUT_UNDEFINED;
     owned_has_data_              = false;
+}
+
+bool VulkanBlitter::AcceptCpuPaint(const CpuPaintFrame& frame) {
+#if ! defined(__APPLE__)
+    (void)frame;
+    return false;
+#else
+    if (frame.buffer == nullptr || frame.width <= 0 || frame.height <= 0 ||
+        frame.format != DmaBufFormat::BGRA8_UNORM) {
+        return false;
+    }
+    const std::size_t packed_stride = static_cast<std::size_t>(frame.width) * 4u;
+    if (frame.row_stride < packed_stride ||
+        static_cast<std::size_t>(frame.height) > SIZE_MAX / packed_stride) {
+        return false;
+    }
+    const std::size_t paint_size = packed_stride * static_cast<std::size_t>(frame.height);
+    std::lock_guard   lock(cpu_paint_mutex_);
+    cpu_paint_data_.resize(paint_size);
+
+    const auto* source = static_cast<const std::byte*>(frame.buffer);
+    auto*       target = cpu_paint_data_.data();
+    for (int y = 0; y < frame.height; ++y) {
+        std::memcpy(target + static_cast<std::size_t>(y) * packed_stride,
+                    source + static_cast<std::size_t>(y) * frame.row_stride,
+                    packed_stride);
+    }
+    cpu_paint_width_   = frame.width;
+    cpu_paint_height_  = frame.height;
+    cpu_paint_pending_ = true;
+    return true;
+#endif
 }
 
 bool VulkanBlitter::AcceptDmaBuf(const DmaBufFrame& frame) {
@@ -673,6 +969,10 @@ bool VulkanBlitter::RenderFrame() {
     if (! swapchain_ || extent_.width == 0 || extent_.height == 0) {
         return false;
     }
+
+#if defined(__APPLE__)
+    if (! UploadPendingCpuPaint()) return false;
+#endif
 
     // Use cmd_bufs_[1] as the present cmd buffer to keep it disjoint
     // from the import-copy buffer at index 0.

@@ -306,6 +306,9 @@ auto BuildMaterial(fs::VFS& vfs, ShaderCache& shader_cache,
     };
     add_shader_unit(ShaderType::VERTEX, shaderPath + ".vert");
     bool has_geometry_stage = geometry_stage == GeometryStageRequirement::Required;
+    if (geometry_stage == GeometryStageRequirement::Disabled) {
+        shader_info_ref.combos[rstd::cppstd::to_string(WE_CB_GS_ENABLED)] = "0";
+    }
     if (has_geometry_stage) {
         std::string geom_path = shaderPath + ".geom";
         if (vfs.metadata(fs::ToPath(geom_path)).is_err()) {

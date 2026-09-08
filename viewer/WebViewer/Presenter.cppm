@@ -25,7 +25,8 @@ public:
 
     virtual bool Resize()                               = 0;
     virtual bool AcceptDmaBuf(const DmaBufFrame& frame) = 0;
-    virtual bool RenderFrame()                          = 0;
+    virtual bool AcceptCpuPaint(const CpuPaintFrame& /*frame*/) { return false; }
+    virtual bool RenderFrame() = 0;
 };
 
 } // namespace weweb

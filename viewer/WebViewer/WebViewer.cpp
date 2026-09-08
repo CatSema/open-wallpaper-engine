@@ -1,5 +1,9 @@
 // weweb standalone GLFW + Vulkan + CEF (OSR) viewer.
 
+#if defined(__APPLE__)
+#    define GLFW_INCLUDE_VULKAN
+#    include <vulkan/vulkan.h>
+#endif
 #include <GLFW/glfw3.h>
 
 import rstd.argparse;
@@ -56,10 +60,15 @@ auto ParseWebViewerArgs(int argc, char** argv) -> Result<WebViewerArgs, owe::cli
                             .long_name("remote-debugging-port"_str)
                             .help("if non-zero, expose chrome devtools on this localhost port"_str)
                             .default_value("0"_str));
-    auto presenter = command.add_arg(Arg<String>::value("presenter"_str, string_parser())
-                                         .long_name("presenter"_str)
-                                         .help("present backend: egl (default) or vulkan"_str)
-                                         .default_value("egl"_str));
+    auto presenter =
+        command.add_arg(Arg<String>::value("presenter"_str, string_parser())
+                            .long_name("presenter"_str)
+                            .help("present backend: vulkan (macOS) or egl/vulkan (Linux)"_str)
+#if defined(__APPLE__)
+                            .default_value("vulkan"_str));
+#else
+                            .default_value("egl"_str));
+#endif
 
     auto parsed = owe::cli::ParseArgs(rstd::move(command), argc, argv);
     if (parsed.is_err()) return Err(parsed.unwrap_err());
@@ -129,6 +138,56 @@ void OnFocus(GLFWwindow* w, int focused) {
     if (ctx && ctx->host) ctx->host->OnFocus(focused == GLFW_TRUE);
 }
 
+struct WindowMetrics {
+    int   logical_width { 0 };
+    int   logical_height { 0 };
+    int   framebuffer_width { 0 };
+    int   framebuffer_height { 0 };
+    float scale { 1.0f };
+};
+
+WindowMetrics GetWindowMetrics(GLFWwindow* window) {
+    WindowMetrics metrics;
+    glfwGetWindowSize(window, &metrics.logical_width, &metrics.logical_height);
+    glfwGetFramebufferSize(window, &metrics.framebuffer_width, &metrics.framebuffer_height);
+
+    float scale_x = 1.0f;
+    float scale_y = 1.0f;
+#if defined(__APPLE__)
+    glfwGetWindowContentScale(window, &scale_x, &scale_y);
+#endif
+    if (scale_x <= 0.0f || scale_y <= 0.0f) {
+        scale_x = metrics.logical_width > 0
+                      ? static_cast<float>(metrics.framebuffer_width) / metrics.logical_width
+                      : 1.0f;
+        scale_y = metrics.logical_height > 0
+                      ? static_cast<float>(metrics.framebuffer_height) / metrics.logical_height
+                      : 1.0f;
+    }
+    metrics.scale = scale_x > 0.0f ? scale_x : scale_y;
+    return metrics;
+}
+
+#if defined(__APPLE__)
+std::filesystem::path CefFrameworkRoot(const std::filesystem::path& exe_dir) {
+    std::vector<std::filesystem::path> candidates;
+    if (const char* override_path = std::getenv("OWE_CEF_FRAMEWORK_PATH");
+        override_path != nullptr && override_path[0] != '\0') {
+        std::filesystem::path path(override_path);
+        if (path.filename() == "Chromium Embedded Framework") path = path.parent_path();
+        candidates.push_back(std::move(path));
+    }
+    candidates.push_back(exe_dir / "../Frameworks/Chromium Embedded Framework.framework");
+    candidates.push_back(exe_dir / "Chromium Embedded Framework.framework");
+    candidates.push_back(exe_dir / "../Chromium Embedded Framework.framework");
+    for (const auto& candidate : candidates) {
+        std::error_code error;
+        if (std::filesystem::is_directory(candidate / "Resources", error)) return candidate;
+    }
+    return {};
+}
+#endif
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -152,21 +211,33 @@ int main(int argc, char** argv) {
     }
 
     auto presenter_name = args.presenter;
+#if defined(__linux__)
     if (presenter_name != "vulkan" && presenter_name != "egl") {
         std::cerr << "webviewer: --presenter must be 'vulkan' or 'egl', got '" << presenter_name
                   << "'\n";
         return 2;
     }
+#else
+    if (presenter_name != "vulkan") {
+        std::cerr << "webviewer: macOS requires --presenter vulkan, got '" << presenter_name
+                  << "'\n";
+        return 2;
+    }
+#endif
 
     auto manifest_opt = weweb::LoadWebManifest(workshop_dir);
     if (! manifest_opt) return 2;
     auto& manifest = *manifest_opt;
 
-    // Force GLFW to use the X11 backend. CEF in OSR mode still ends up
-    // initialising Ozone (clipboard, font fallback, …) and we run with
-    // --ozone-platform=x11; matching the toolkit avoids cross-display
-    // synchronization weirdness.
+    // Keep Linux on its existing X11 path; macOS lets GLFW select Cocoa.
+#if defined(__APPLE__)
     viewer::InitGlfwPlatformHint(/*force_x11=*/false);
+#else
+    viewer::InitGlfwPlatformHint(/*force_x11=*/true);
+#endif
+#if defined(__APPLE__)
+    if (presenter_name == "vulkan") glfwInitVulkanLoader(vkGetInstanceProcAddr);
+#endif
     if (! glfwInit()) {
         std::cerr << "webviewer: glfwInit failed\n";
         return 1;
@@ -176,9 +247,11 @@ int main(int argc, char** argv) {
         glfwTerminate();
         return 1;
     }
-    // EGL path manages its own GL context against the X11 window; we still
-    // want GLFW to leave the window context-less either way.
+    // The presenter owns the graphics context/device.
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+#if defined(__APPLE__)
+    glfwWindowHint(GLFW_COCOA_RETINA_FRAMEBUFFER, GLFW_TRUE);
+#endif
 
     int         w_width  = args.width.to_primitive();
     int         w_height = args.height.to_primitive();
@@ -193,8 +266,10 @@ int main(int argc, char** argv) {
     std::unique_ptr<weweb::Presenter> presenter;
     if (presenter_name == "vulkan") {
         presenter = std::make_unique<weweb::VulkanBlitter>();
+#if defined(__linux__)
     } else {
         presenter = std::make_unique<weweb::EglPresenter>();
+#endif
     }
     if (! presenter->Init(window)) {
         glfwDestroyWindow(window);
@@ -207,6 +282,12 @@ int main(int argc, char** argv) {
     weweb::BrowserHost::InitOptions opts;
     opts.resources_dir = exe_dir;
     opts.locales_dir   = exe_dir / "locales";
+#if defined(__APPLE__)
+    if (auto framework_root = CefFrameworkRoot(exe_dir); ! framework_root.empty()) {
+        opts.resources_dir = framework_root / "Resources";
+        opts.locales_dir   = opts.resources_dir / "locales";
+    }
+#endif
     if (int port = args.remote_debugging_port.to_primitive(); port > 0) {
         opts.enable_remote_debugging = true;
         opts.remote_debugging_port   = port;
@@ -219,19 +300,46 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    // Hook DMA-BUF frames straight into the presenter's import path.
-    // The callback runs synchronously inside CefDoMessageLoopWork on the
-    // main thread; FDs in `frame` are valid only for the duration.
+    // Hook platform-specific CEF frame handles into the presenter's import
+    // path. Each callback is synchronous: CEF reclaims its frame resource
+    // immediately after the callback returns.
     weweb::Presenter* presenter_ptr = presenter.get();
+#if defined(__linux__)
     host.SetAcceleratedPaintCallback([presenter_ptr](const weweb::DmaBufFrame& frame) {
         presenter_ptr->AcceptDmaBuf(frame);
     });
+#else
+    host.SetCpuPaintCallback([presenter_ptr](const weweb::CpuPaintFrame& frame) {
+        presenter_ptr->AcceptCpuPaint(frame);
+    });
+#endif
 
-    // Open the wallpaper at the swapchain extent — CEF renders straight
-    // into our swapchain-pixel space, no rescaling needed.
-    int initial_w = static_cast<int>(presenter->Width());
-    int initial_h = static_cast<int>(presenter->Height());
-    if (! host.OpenWallpaper(manifest, workshop_dir, initial_w, initial_h)) {
+#if defined(__APPLE__)
+    // CEF view sizes are in logical pixels. The presenter remains in physical
+    // framebuffer pixels, so CEF applies the device scale factor internally.
+    auto initial_metrics = GetWindowMetrics(window);
+    if (initial_metrics.logical_width <= 0 || initial_metrics.logical_height <= 0) {
+        initial_metrics.logical_width  = w_width;
+        initial_metrics.logical_height = w_height;
+    }
+    weweb::BrowserHost::OpenOptions open_opts;
+    open_opts.device_scale_factor = initial_metrics.scale;
+    // CEF currently supports windowless shared textures only on Windows.
+    // macOS must use OnPaint; CEF still performs page compositing on the GPU.
+    open_opts.shared_texture_enabled = false;
+    if (! host.OpenWallpaper(manifest,
+                             workshop_dir,
+                             initial_metrics.logical_width,
+                             initial_metrics.logical_height,
+                             open_opts)) {
+#else
+    // Preserve the Linux contract: CEF receives the physical presenter extent
+    // and uses its existing unit-scale screen information.
+    if (! host.OpenWallpaper(manifest,
+                             workshop_dir,
+                             static_cast<int>(presenter->Width()),
+                             static_cast<int>(presenter->Height()))) {
+#endif
         host.Shutdown();
         presenter->Shutdown();
         glfwDestroyWindow(window);
@@ -287,24 +395,27 @@ int main(int argc, char** argv) {
             }
         }
 
-        // CEF's internal pacing in OSR shared-texture mode goes quiet
-        // after the first paint until something on the page is dirty.
-        // Pages with rAF-driven animation expect a presenter to ask
-        // for frames continuously. CEF dedupes internally to its
-        // windowless_frame_rate (60), so an unconditional Invalidate
-        // per loop iteration is the right pattern.
+        // CEF's OSR pacing can go quiet after the first paint until something
+        // on the page is dirty. Pages with rAF-driven animation expect a
+        // presenter to ask for frames continuously. CEF dedupes internally
+        // to its windowless_frame_rate, so an unconditional Invalidate per
+        // loop iteration is the right pattern.
         host.Invalidate();
 
         if (ctx.need_swapchain_recreate) {
-            int fbw = 0, fbh = 0;
-            glfwGetFramebufferSize(window, &fbw, &fbh);
-            if (fbw > 0 && fbh > 0) {
+            auto metrics = GetWindowMetrics(window);
+            if (metrics.framebuffer_width > 0 && metrics.framebuffer_height > 0 &&
+                metrics.logical_width > 0 && metrics.logical_height > 0) {
                 if (! presenter->Resize()) {
                     std::cerr << "webviewer: presenter Resize failed\n";
                     break;
                 }
+#if defined(__APPLE__)
+                host.OnResize(metrics.logical_width, metrics.logical_height, metrics.scale);
+#else
                 host.OnResize(static_cast<int>(presenter->Width()),
                               static_cast<int>(presenter->Height()));
+#endif
                 ctx.need_swapchain_recreate = false;
             } else {
                 std::this_thread::sleep_for(std::chrono::milliseconds(16));
@@ -312,8 +423,8 @@ int main(int argc, char** argv) {
             }
         }
 
-        // Owned image was already updated synchronously inside Pump()
-        // when CEF delivered an OnAcceleratedPaint frame.
+        // CEF copies OSR pixels into the presenter's bounded latest-frame
+        // buffer; the render thread uploads that buffer before presenting.
         if (! presenter->RenderFrame()) {
             ctx.need_swapchain_recreate = true;
         }

@@ -83,8 +83,7 @@ void AppHandler::OnBeforeCommandLineProcessing(const CefString&          process
     cmd->AppendSwitch("no-sandbox");
     // cmd->AppendSwitch("disable-gpu-sandbox");
 
-    std::string features { "AcceleratedVideoDecodeLinuxZeroCopyGL,AcceleratedVideoDecodeLinuxGL,"
-                           "VaapiIgnoreDriverChecks,VaapiOnNvidiaGPUs,VaapiVideoDecodeLinuxGL" };
+    std::string features;
     std::string dis_features;
     if (cmd->HasSwitch("disable-features")) {
         dis_features = cmd->GetSwitchValue("disable-features").ToString();
@@ -93,18 +92,25 @@ void AppHandler::OnBeforeCommandLineProcessing(const CefString&          process
             "Crashpad,AutofillServerCommunication,HardwareMediaKeyHandling,WebBluetooth,WebUSB";
     }
 
+#if defined(__linux__)
     auto dis_vulkan = [&dis_features, &cmd] {
         if (! dis_features.empty()) dis_features += ",";
         dis_features += "Vulkan,VulkanFromANGLE,DefaultAngleVulkan,SkiaGraphite";
         cmd->AppendSwitch("disable-vulkan-surface");
     };
+#endif
 
+#if defined(__linux__)
     auto enable_shared = [this, &cmd] {
         if (! m_shared_texture_enabled) return;
         cmd->AppendSwitch("shared-texture-enabled");
         cmd->AppendSwitch("enable-zero-copy");
     };
+#endif
 
+#if defined(__linux__)
+    features = "AcceleratedVideoDecodeLinuxZeroCopyGL,AcceleratedVideoDecodeLinuxGL,"
+               "VaapiIgnoreDriverChecks,VaapiOnNvidiaGPUs,VaapiVideoDecodeLinuxGL";
     if (0) {
         // Vulkan
         cmd->AppendSwitch("vulkan");
@@ -128,6 +134,15 @@ void AppHandler::OnBeforeCommandLineProcessing(const CefString&          process
         cmd->AppendSwitchWithValue("ozone-platform", "wayland");
         // cmd->AppendSwitchWithValue("ozone-platform-hint", "wayland");
     }
+#else
+    // macOS uses Chromium's native Metal and VideoToolbox paths. Forcing the
+    // Linux ANGLE/Ozone configuration here disables those platform backends.
+    // CEF's windowless shared-texture switch is currently supported only on
+    // Windows/D3D11. macOS delivers OSR frames through OnPaint instead.
+    // Wallpapers do not persist credentials and should not prompt for
+    // access to the user's login keychain.
+    cmd->AppendSwitch("use-mock-keychain");
+#endif
     if (! m_render_node_override.empty()) {
         cmd->AppendSwitchWithValue("render-node-override", m_render_node_override);
     }
@@ -139,15 +154,23 @@ void AppHandler::OnBeforeCommandLineProcessing(const CefString&          process
     cmd->AppendSwitch("disable-software-rasterizer");
     cmd->AppendSwitch("off-screen-rendering-enabled");
 
-    // hw decode
+    // Hardware decode and native GPU memory buffer switches below are Linux
+    // backend controls. Chromium selects VideoToolbox on macOS by default.
+#if defined(__linux__)
     cmd->AppendSwitch("enable-accelerated-video-decode");
     cmd->AppendSwitch("enable-native-gpu-memory-buffers");
+#endif
 
     // cmd->AppendSwitch("disable-gpu-compositing");
     // cmd->AppendSwitch("disable-gpu-vsync");
 
+#if defined(__linux__)
     cmd->AppendSwitchWithValue("enable-features", features);
     cmd->AppendSwitchWithValue("disable-features", dis_features);
+#else
+    if (! features.empty()) cmd->AppendSwitchWithValue("enable-features", features);
+    if (! dis_features.empty()) cmd->AppendSwitchWithValue("disable-features", dis_features);
+#endif
 
     // Autoplay video / audio without user-gesture prompts. WE wallpapers
     // routinely auto-play media on load.

@@ -26,9 +26,10 @@ public:
     };
 
     struct OpenOptions {
-        bool shared_texture_enabled { true };
-        bool initially_muted { false };
-        int  frame_rate { 60 };
+        bool  shared_texture_enabled { true };
+        bool  initially_muted { false };
+        int   frame_rate { 60 };
+        float device_scale_factor { 1.0f };
     };
 
     BrowserHost();
@@ -50,6 +51,7 @@ public:
                        int width, int height, OpenOptions opts);
 
     void OnResize(int width, int height);
+    void OnResize(int width, int height, float device_scale_factor);
     void Invalidate();
 
     void OnMouseMove(int x, int y, bool left_down);

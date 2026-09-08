@@ -575,15 +575,17 @@ SceneParseContext BuildContext(fs::VFS& vfs, ref<str> scene_id, const wpscene::S
                                array<i32, 2>                ortho_extent,
                                Option<ref<rstd::json::Map>> user_properties,
                                Option<rstd::path::PathBuf>  shader_cache_dir,
-                               GeometryShaderLimits geometry_limits, bool directional_shadow) {
+                               GeometryShaderLimits geometry_limits, bool directional_shadow,
+                               bool geometry_shader_supported) {
     SceneParseContext context;
     PrepareAnimationBindings(context, sc.general.field_bindings);
     InitContext(context, vfs, sc, ortho_extent);
     ParseCamera(context, sc);
-    context.pkg_version            = sc.pkg_version;
-    context.user_properties        = user_properties;
-    context.shader_cache           = Arc<ShaderCache>::make(rstd::move(shader_cache_dir));
-    context.geometry_shader_limits = geometry_limits;
+    context.pkg_version               = sc.pkg_version;
+    context.user_properties           = user_properties;
+    context.shader_cache              = Arc<ShaderCache>::make(rstd::move(shader_cache_dir));
+    context.geometry_shader_limits    = geometry_limits;
+    context.geometry_shader_supported = geometry_shader_supported;
     context.shader_environment.directional_shadow =
         directional_shadow && sc.general.lightconfig.directionalshadow > u32();
 

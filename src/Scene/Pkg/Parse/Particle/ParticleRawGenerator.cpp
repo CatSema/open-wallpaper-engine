@@ -22,6 +22,7 @@ namespace
 
 struct GOption {
     bool thick_format { false };
+    bool expand_corners { false }; // GS_ENABLED=0: CPU 4 vertex expansion per particle/segment
 };
 
 struct AttrSlot {
@@ -34,6 +35,7 @@ struct PointVertexLayout {
     AttrSlot texcoord;
     AttrSlot color;
     AttrSlot velocity;
+    AttrSlot texcoord_c2; // No geometry shader variant: Rotate x, y
 };
 
 struct RopeVertexLayout {
@@ -43,6 +45,7 @@ struct RopeVertexLayout {
     AttrSlot next_point;
     AttrSlot color_end;
     AttrSlot color;
+    AttrSlot corner_uv; // Geometry-shader-free variant: segment corner UVs
 };
 
 struct ExtractParticle {
@@ -106,10 +109,11 @@ auto FindAttrSlot(
 auto ResolvePointVertexLayout(const SceneVertexArray& vertices) -> PointVertexLayout {
     const auto attributes = vertices.GetAttrOffsetMap();
     return {
-        .position = FindAttrSlot(attributes, WE_IN_POSITION),
-        .texcoord = FindAttrSlot(attributes, WE_IN_TEXCOORDVEC4),
-        .color    = FindAttrSlot(attributes, WE_IN_COLOR),
-        .velocity = FindAttrSlot(attributes, WE_IN_TEXCOORDVEC4C1),
+        .position    = FindAttrSlot(attributes, WE_IN_POSITION),
+        .texcoord    = FindAttrSlot(attributes, WE_IN_TEXCOORDVEC4),
+        .color       = FindAttrSlot(attributes, WE_IN_COLOR),
+        .velocity    = FindAttrSlot(attributes, WE_IN_TEXCOORDVEC4C1),
+        .texcoord_c2 = FindAttrSlot(attributes, WE_IN_TEXCOORDC2),
     };
 }
 
@@ -123,7 +127,15 @@ auto ResolveRopeVertexLayout(const SceneVertexArray& vertices, GOption option) -
             attributes, option.thick_format ? WE_IN_TEXCOORDVEC4C2 : WE_IN_TEXCOORDVEC3C2),
         .color_end = FindAttrSlot(attributes, WE_IN_TEXCOORDVEC4C3),
         .color     = FindAttrSlot(attributes, WE_IN_COLOR),
+        .corner_uv =
+            FindAttrSlot(attributes, option.thick_format ? WE_IN_TEXCOORDC4 : WE_IN_TEXCOORDC3),
     };
+}
+
+void Write2(mut_ref<float[]> data, AttrSlot slot, float x, float y) noexcept {
+    if (! slot.enabled) return;
+    data[slot.offset]            = x;
+    data[slot.offset + usize(1)] = y;
 }
 
 void Write3(mut_ref<float[]> data, AttrSlot slot, float x, float y, float z) noexcept {
@@ -147,6 +159,11 @@ void Write4(mut_ref<float[]> data, AttrSlot slot, const Eigen::Vector3f& source,
     Write4(data, slot, source[0], source[1], source[2], w);
 }
 
+// Four corner UVs without geometry shader variant (in order of index array (0,1,3)(1,2,3)).
+const std::array<std::array<float, 2>, 4> g_corners {
+    { { 0.0f, 1.0f }, { 1.0f, 1.0f }, { 1.0f, 0.0f }, { 0.0f, 0.0f } }
+};
+
 void WriteColor(mut_ref<float[]> data, AttrSlot slot, const ExtractParticle& value) noexcept {
     Write4(data, slot, value.color[0], value.color[1], value.color[2], value.alpha);
 }
@@ -167,6 +184,11 @@ auto AnimationLifetime(const ExtractParticle& value, ParticleAnimationSpec anima
 void GenParticlePointData(slice<ExtractInstance> instances, const ParticleSubSystem& subsystem,
                           GOption option, const PointVertexLayout& layout,
                           SceneVertexWriter& writer) noexcept {
+    // GS_ENABLED=0 (no geometry shader) variant: CPU expands each particle into a 4-vertex quad.
+    // a_TexCoordVec4 = (corner_u, corner_v, rz, size)，a_TexCoordC2 = (rx, ry)。
+    static const std::array<std::array<float, 2>, 4> corners {
+        { { 0.0f, 1.0f }, { 1.0f, 1.0f }, { 1.0f, 0.0f }, { 0.0f, 0.0f } }
+    };
     for (const auto& instance : instances) {
         if (subsystem.InstanceState(instance.instance_index).no_live_particle) continue;
         for (auto slot : instance.slots) {
@@ -175,26 +197,68 @@ void GenParticlePointData(slice<ExtractInstance> instances, const ParticleSubSys
 
             auto render_position =
                 subsystem.RenderPosition(instance.instance_index, value.position);
-            auto lifetime    = AnimationLifetime(value, subsystem.AnimationSpec());
-            auto destination = writer.AppendZeroedVertex();
-            if (destination.is_none()) return;
-            auto data = *destination;
-            Write3(
-                data, layout.position, render_position[0], render_position[1], render_position[2]);
-            Write4(data,
-                   layout.texcoord,
-                   value.rotation[0],
-                   value.rotation[1],
-                   value.rotation[2],
-                   value.size * 0.5f);
-            Write4(data, layout.color, value.color[0], value.color[1], value.color[2], value.alpha);
-            if (option.thick_format) {
+            auto lifetime = AnimationLifetime(value, subsystem.AnimationSpec());
+            if (! option.expand_corners) {
+                auto destination = writer.AppendZeroedVertex();
+                if (destination.is_none()) return;
+                auto data = *destination;
+                Write3(data,
+                       layout.position,
+                       render_position[0],
+                       render_position[1],
+                       render_position[2]);
                 Write4(data,
-                       layout.velocity,
-                       value.velocity[0],
-                       value.velocity[1],
-                       value.velocity[2],
-                       lifetime);
+                       layout.texcoord,
+                       value.rotation[0],
+                       value.rotation[1],
+                       value.rotation[2],
+                       value.size * 0.5f);
+                Write4(data,
+                       layout.color,
+                       value.color[0],
+                       value.color[1],
+                       value.color[2],
+                       value.alpha);
+                if (option.thick_format) {
+                    Write4(data,
+                           layout.velocity,
+                           value.velocity[0],
+                           value.velocity[1],
+                           value.velocity[2],
+                           lifetime);
+                }
+                continue;
+            }
+            for (const auto& corner : corners) {
+                auto destination = writer.AppendZeroedVertex();
+                if (destination.is_none()) return;
+                auto data = *destination;
+                Write3(data,
+                       layout.position,
+                       render_position[0],
+                       render_position[1],
+                       render_position[2]);
+                Write4(data,
+                       layout.texcoord,
+                       corner[0],
+                       corner[1],
+                       value.rotation[2],
+                       value.size * 0.5f);
+                Write2(data, layout.texcoord_c2, value.rotation[0], value.rotation[1]);
+                Write4(data,
+                       layout.color,
+                       value.color[0],
+                       value.color[1],
+                       value.color[2],
+                       value.alpha);
+                if (option.thick_format) {
+                    Write4(data,
+                           layout.velocity,
+                           value.velocity[0],
+                           value.velocity[1],
+                           value.velocity[2],
+                           lifetime);
+                }
             }
         }
     }
@@ -243,6 +307,42 @@ void GenRopeParticleData(slice<ExtractInstance> instances, const ParticleSubSyst
                 auto previous       = particle(previous_index);
                 auto next           = particle(next_index);
                 auto after          = particle(after_index);
+
+                if (option.expand_corners) {
+                    // GS_ENABLED=0: Each segment is expanded into a 4-vertex quad.
+                    // a_PositionVec4=(sp,size)，a_TexCoordVec4=(ep,trail_len)，
+                    // a_TexCoordVec4C1=(scp,trail_pos)，C2=(ecp,size_end)，
+                    // corner UVs in a_TexCoordC3/C4。
+                    const auto  sp        = render_position(current);
+                    const auto  ep        = render_position(next);
+                    const float trail_pos = static_cast<float>(index - begin) + sequence_offset;
+                    // Control point offset: perpendicular to segment, based on end rotation.
+                    Eigen::Vector3f cp_vec  = Eigen::AngleAxisf(next.rotation[2] + 1.57079632679f,
+                                                                Eigen::Vector3f::UnitZ()) *
+                                              Eigen::Vector3f { 0.0f, next.size * 0.25f, 0.0f };
+                    Eigen::Vector3f pos_vec = ep - sp;
+                    cp_vec = pos_vec.normalized().dot(cp_vec) > 0.0f ? cp_vec : -cp_vec;
+                    const Eigen::Vector3f scp        = sp + cp_vec;
+                    const Eigen::Vector3f ecp        = ep - cp_vec;
+                    const float           size_start = current.size * 0.5f;
+                    const float           size_end   = next.size * 0.5f;
+                    for (const auto& corner : g_corners) {
+                        auto destination = writer.AppendZeroedVertex();
+                        if (destination.is_none()) return false;
+                        auto data = *destination;
+                        Write4(data, layout.position, sp, size_start);
+                        Write4(data, layout.endpoint, ep, static_cast<float>(segment_count));
+                        Write4(data, layout.previous_point, scp, trail_pos);
+                        if (option.thick_format)
+                            Write4(data, layout.next_point, ecp, size_end);
+                        else
+                            Write3(data, layout.next_point, ecp);
+                        Write2(data, layout.corner_uv, corner[0], corner[1]);
+                        WriteColor(data, layout.color_end, next);
+                        WriteColor(data, layout.color, current);
+                    }
+                    continue;
+                }
 
                 auto destination = writer.AppendZeroedVertex();
                 if (destination.is_none()) return false;
@@ -308,7 +408,26 @@ void GenRopeTrailSegments(const ExtractParticle& value, const ParticleSubSystem&
         auto start_control  = point(sample_index == usize() ? usize() : sample_index - usize(1));
         auto end_control    = point(rstd::cmp::min(sample_index + usize(2), state.len));
         auto trail_position = static_cast<float>(sample_index.to_primitive());
-        auto destination    = writer.AppendZeroedVertex();
+        if (option.expand_corners) {
+            // GS_ENABLED=0: Each sample point is expanded into a 4-vertex quadrilateral.
+            for (const auto& corner : g_corners) {
+                auto destination = writer.AppendZeroedVertex();
+                if (destination.is_none()) return;
+                auto data = *destination;
+                Write4(data, layout.position, previous, size);
+                Write4(data, layout.endpoint, current, trail_length);
+                Write4(data, layout.previous_point, start_control, trail_position);
+                if (option.thick_format)
+                    Write4(data, layout.next_point, end_control, size);
+                else
+                    Write3(data, layout.next_point, end_control);
+                Write2(data, layout.corner_uv, corner[0], corner[1]);
+                WriteColor(data, layout.color_end, value);
+                WriteColor(data, layout.color, value);
+            }
+            continue;
+        }
+        auto destination = writer.AppendZeroedVertex();
         if (destination.is_none()) return;
         auto data = *destination;
         Write4(data, layout.position, previous, size);
@@ -381,7 +500,8 @@ void ParticleRawGenerator::Extract(particle::ParticleExtractContext& context) {
     auto&   mesh     = m_subsystem->Mesh();
     auto&   vertices = mesh.GetVertexArray(usize());
     GOption option {
-        .thick_format = vertices.GetOption(rstd::cppstd::as_string_view(WE_CB_THICK_FORMAT)),
+        .thick_format   = vertices.GetOption(rstd::cppstd::as_string_view(WE_CB_THICK_FORMAT)),
+        .expand_corners = ! vertices.GetOption(rstd::cppstd::as_string_view(WE_CB_GS_ENABLED)),
     };
 
     auto rope       = vertices.GetOption(rstd::cppstd::as_string_view(WE_PRENDER_ROPE));

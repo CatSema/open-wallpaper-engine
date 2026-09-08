@@ -1,6 +1,12 @@
 module;
 
 #include <cstdio>
+#include <algorithm>
+#include <cstring>
+
+#if defined(__APPLE__)
+#    include <mach-o/dyld.h>
+#endif
 
 module weweb;
 
@@ -13,6 +19,97 @@ using namespace rstd::literals;
 
 namespace weweb
 {
+
+#if defined(__APPLE__)
+namespace
+{
+
+std::filesystem::path CurrentExecutablePath() {
+    std::uint32_t size = 0;
+    if (_NSGetExecutablePath(nullptr, &size) != -1 || size == 0) return {};
+
+    std::string buffer(size, '\0');
+    if (_NSGetExecutablePath(buffer.data(), &size) != 0) return {};
+    return std::filesystem::path(buffer.c_str());
+}
+
+void AddFrameworkCandidate(std::vector<std::filesystem::path>& candidates,
+                           std::filesystem::path               path) {
+    if (path.filename() == "Chromium Embedded Framework.framework") {
+        path /= "Chromium Embedded Framework";
+    }
+    if (path.filename() != "Chromium Embedded Framework") return;
+
+    std::error_code error;
+    if (! std::filesystem::is_regular_file(path, error)) return;
+    if (std::find(candidates.begin(), candidates.end(), path) == candidates.end()) {
+        candidates.push_back(std::move(path));
+    }
+}
+
+bool LoadCefFramework(bool helper, std::filesystem::path* loaded_binary) {
+    std::vector<std::filesystem::path> candidates;
+    if (const char* override_path = std::getenv("OWE_CEF_FRAMEWORK_PATH");
+        override_path != nullptr && override_path[0] != '\0') {
+        AddFrameworkCandidate(candidates, override_path);
+    }
+
+    const auto executable = CurrentExecutablePath();
+    if (! executable.empty()) {
+        const auto executable_dir = executable.parent_path();
+        const auto main_root      = executable_dir / "../Frameworks";
+        const auto helper_root    = executable_dir / "../../..";
+        if (helper) {
+            AddFrameworkCandidate(
+                candidates,
+                helper_root / "Chromium Embedded Framework.framework/Chromium Embedded Framework");
+        }
+        // A single executable can also be used as the browser subprocess
+        // entry point. In that layout the helper process still loads from the
+        // main app's Contents/Frameworks directory.
+        AddFrameworkCandidate(
+            candidates,
+            main_root / "Chromium Embedded Framework.framework/Chromium Embedded Framework");
+
+        // Development builds may not be wrapped in an application bundle yet.
+        AddFrameworkCandidate(
+            candidates,
+            executable_dir / "Chromium Embedded Framework.framework/Chromium Embedded Framework");
+        AddFrameworkCandidate(
+            candidates,
+            executable_dir /
+                "../Chromium Embedded Framework.framework/Chromium Embedded Framework");
+        AddFrameworkCandidate(
+            candidates,
+            executable_dir /
+                "../Frameworks/Chromium Embedded Framework.framework/Chromium Embedded Framework");
+    }
+
+    for (const auto& candidate : candidates) {
+        if (cef_load_library(candidate.string().c_str())) {
+            if (loaded_binary != nullptr) *loaded_binary = candidate;
+            if (! helper) {
+                std::fprintf(stderr, "weweb: loaded CEF framework from %s\n", candidate.c_str());
+            }
+            return true;
+        }
+    }
+
+    std::fprintf(stderr,
+                 "weweb: unable to load Chromium Embedded Framework; "
+                 "set OWE_CEF_FRAMEWORK_PATH to the framework binary\n");
+    return false;
+}
+
+bool IsCefHelperProcess(int argc, char** argv) {
+    for (int i = 1; i < argc; ++i) {
+        if (argv[i] != nullptr && std::strncmp(argv[i], "--type=", 7) == 0) return true;
+    }
+    return false;
+}
+
+} // namespace
+#endif
 
 struct BrowserHost::Impl {
     CefRefPtr<AppHandler>       app;
@@ -28,6 +125,10 @@ struct BrowserHost::Impl {
     // switches it forwards to subprocesses.
     int    saved_argc { 0 };
     char** saved_argv { nullptr };
+#if defined(__APPLE__)
+    bool                  cef_loaded { false };
+    std::filesystem::path cef_framework_binary;
+#endif
 };
 
 BrowserHost::BrowserHost(): impl_(std::make_unique<Impl>()) { impl_->app = new AppHandler(); }
@@ -37,8 +138,23 @@ BrowserHost::~BrowserHost() { Shutdown(); }
 int BrowserHost::RunOrExitIfHelper(int argc, char** argv) {
     impl_->saved_argc = argc;
     impl_->saved_argv = argv;
+#if defined(__APPLE__)
+    if (! impl_->cef_loaded) {
+        if (! LoadCefFramework(IsCefHelperProcess(argc, argv), &impl_->cef_framework_binary)) {
+            return 1;
+        }
+        impl_->cef_loaded = true;
+    }
+#endif
     CefMainArgs main_args(argc, argv);
-    return CefExecuteProcess(main_args, impl_->app.get(), nullptr);
+    const int   result = CefExecuteProcess(main_args, impl_->app.get(), nullptr);
+#if defined(__APPLE__)
+    if (result >= 0) {
+        cef_unload_library();
+        impl_->cef_loaded = false;
+    }
+#endif
+    return result;
 }
 
 bool BrowserHost::Init(const InitOptions& opts) {
@@ -46,6 +162,13 @@ bool BrowserHost::Init(const InitOptions& opts) {
         std::fprintf(stderr, "weweb: BrowserHost::Init called twice\n");
         return false;
     }
+
+#if defined(__APPLE__)
+    if (! impl_->cef_loaded) {
+        if (! LoadCefFramework(false, &impl_->cef_framework_binary)) return false;
+        impl_->cef_loaded = true;
+    }
+#endif
 
     CefMainArgs main_args(impl_->saved_argc, impl_->saved_argv);
 
@@ -69,6 +192,23 @@ bool BrowserHost::Init(const InitOptions& opts) {
         CefString cef_str { dest };
         cef_str = p.string();
     };
+#if defined(__APPLE__)
+    // A single executable is used for the browser and CEF subprocesses in
+    // development builds. The same entry point calls CefExecuteProcess
+    // before entering the browser loop, so no helper app is required.
+    set_cef_path(&settings.browser_subprocess_path, CurrentExecutablePath());
+    if (const char* override_path = std::getenv("OWE_CEF_FRAMEWORK_PATH");
+        override_path != nullptr && override_path[0] != '\0') {
+        std::filesystem::path framework_path(override_path);
+        if (framework_path.filename() == "Chromium Embedded Framework") {
+            framework_path = framework_path.parent_path();
+        }
+        set_cef_path(&settings.framework_dir_path, framework_path);
+    }
+    if (settings.framework_dir_path.length == 0 && ! impl_->cef_framework_binary.empty()) {
+        set_cef_path(&settings.framework_dir_path, impl_->cef_framework_binary.parent_path());
+    }
+#endif
     set_cef_path(&settings.resources_dir_path, opts.resources_dir);
     set_cef_path(&settings.locales_dir_path, opts.locales_dir);
     set_cef_path(&settings.root_cache_path, opts.cache_dir);
@@ -85,6 +225,10 @@ bool BrowserHost::Init(const InitOptions& opts) {
 
     if (! CefInitialize(main_args, settings, impl_->app.get(), nullptr)) {
         std::fprintf(stderr, "weweb: CefInitialize failed\n");
+#if defined(__APPLE__)
+        cef_unload_library();
+        impl_->cef_loaded = false;
+#endif
         return false;
     }
     impl_->initialised = true;
@@ -112,6 +256,7 @@ bool BrowserHost::OpenWallpaper(const WebManifest&           manifest,
     if (impl_->cpu_cb) {
         impl_->osr->SetCpuPaintCallback(impl_->cpu_cb);
     }
+    impl_->osr->SetDeviceScaleFactor(opts.device_scale_factor);
 
     impl_->client =
         new ClientHandler(manifest.user_props.clone(), impl_->osr, opts.initially_muted);
@@ -130,9 +275,12 @@ bool BrowserHost::OpenWallpaper(const WebManifest&           manifest,
     CefBrowserSettings browser_settings;
     browser_settings.windowless_frame_rate = opts.frame_rate > 0 ? opts.frame_rate : 60;
 
-    CefBrowserHost::CreateBrowser(
+    const bool created = CefBrowserHost::CreateBrowser(
         info, impl_->client.get(), url, browser_settings, nullptr, nullptr);
-    return true;
+    if (! created) {
+        std::fprintf(stderr, "weweb: CefBrowserHost::CreateBrowser failed for %s\n", url.c_str());
+    }
+    return created;
 }
 
 void BrowserHost::SetAcceleratedPaintCallback(AcceleratedPaintCallback cb) {
@@ -156,10 +304,13 @@ void BrowserHost::Invalidate() {
     if (b && b->GetHost()) b->GetHost()->Invalidate(PET_VIEW);
 }
 
-void BrowserHost::OnResize(int width, int height) {
+void BrowserHost::OnResize(int width, int height) { OnResize(width, height, 1.0f); }
+
+void BrowserHost::OnResize(int width, int height, float device_scale_factor) {
     if (width <= 0 || height <= 0) return;
     if (! impl_->osr) return;
     impl_->osr->SetViewSize(width, height);
+    impl_->osr->SetDeviceScaleFactor(device_scale_factor);
     if (! impl_->client) return;
     if (auto b = impl_->client->GetBrowser(); b && b->GetHost()) {
         b->GetHost()->WasResized();
@@ -299,9 +450,16 @@ bool BrowserHost::ShouldExit() const { return impl_->should_exit.load(); }
 void BrowserHost::RequestClose() { impl_->should_exit.store(true); }
 
 void BrowserHost::Shutdown() {
-    if (! impl_->initialised) return;
-    CefShutdown();
-    impl_->initialised = false;
+    if (impl_->initialised) {
+        CefShutdown();
+        impl_->initialised = false;
+    }
+#if defined(__APPLE__)
+    if (impl_->cef_loaded) {
+        cef_unload_library();
+        impl_->cef_loaded = false;
+    }
+#endif
 }
 
 } // namespace weweb

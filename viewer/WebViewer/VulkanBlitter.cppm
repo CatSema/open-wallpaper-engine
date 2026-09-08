@@ -2,6 +2,10 @@ module;
 
 struct GLFWwindow;
 
+#if defined(__APPLE__)
+#    include <vulkan/vulkan.h>
+#endif
+
 export module viewer.web:vulkan_blitter;
 
 import rstd.cppstd;
@@ -18,6 +22,9 @@ export namespace weweb
 // vkCmdCopyImage's it into a persistent device-local "owned" VkImage,
 // waits on a fence (CEF reclaims the buffer the moment the callback
 // returns), and tears down the temporaries.
+//
+// On macOS, AcceptCpuPaint copies CEF's OnPaint rows into bounded host storage
+// and the render thread uploads them into the same owned image.
 //
 // RenderFrame vkCmdBlitImage's owned → swapchain image and presents.
 //
@@ -38,6 +45,7 @@ public:
 
     bool Resize() override;
     bool AcceptDmaBuf(const DmaBufFrame& frame) override;
+    bool AcceptCpuPaint(const CpuPaintFrame& frame) override;
     bool RenderFrame() override;
 
 private:
@@ -48,6 +56,13 @@ private:
     bool CreateSwapchain();
     bool CreateCommandPool();
     bool CreateSyncObjects();
+
+#if defined(__APPLE__)
+    bool EnsureCpuStaging(std::size_t size);
+    void DestroyCpuStaging();
+    bool UploadPendingCpuPaint();
+    bool CopyCpuStagingToOwned(int width, int height);
+#endif
 
     bool EnsureOwnedImage(int width, int height);
     void DestroyOwnedImage();
@@ -89,6 +104,21 @@ private:
     // creation time — these come from VK_KHR_external_memory_fd which
     // is enabled as a device extension.
     PFN_vkGetMemoryFdPropertiesKHR pfn_GetMemoryFdProperties_ { nullptr };
+
+#if defined(__APPLE__)
+    bool portability_subset_supported_ { false };
+
+    VkBuffer               cpu_staging_ { VK_NULL_HANDLE };
+    VkDeviceMemory         cpu_staging_mem_ { VK_NULL_HANDLE };
+    void*                  cpu_staging_mapped_ { nullptr };
+    VkDeviceSize           cpu_staging_size_ { 0 };
+    bool                   cpu_staging_coherent_ { false };
+    std::vector<std::byte> cpu_paint_data_;
+    std::mutex             cpu_paint_mutex_;
+    int                    cpu_paint_width_ { 0 };
+    int                    cpu_paint_height_ { 0 };
+    bool                   cpu_paint_pending_ { false };
+#endif
 
     // Commands + sync. One per in-flight frame.
     VkCommandPool   cmd_pool_ { VK_NULL_HANDLE };
