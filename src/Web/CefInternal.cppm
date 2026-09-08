@@ -22,8 +22,8 @@ public:
 
     CefRefPtr<CefBrowserProcessHandler> GetBrowserProcessHandler() override { return this; }
     CefRefPtr<CefRenderProcessHandler>  GetRenderProcessHandler() override { return this; }
-    void OnBeforeCommandLineProcessing(const CefString&          process_type,
-                                       CefRefPtr<CefCommandLine> cmd) override;
+    void                                OnBeforeCommandLineProcessing(const CefString&          process_type,
+                                                                      CefRefPtr<CefCommandLine> cmd) override;
 
     void OnContextInitialized() override;
     void OnContextCreated(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
@@ -59,6 +59,7 @@ public:
     OsrRenderHandler& operator=(const OsrRenderHandler&) = delete;
 
     void SetViewSize(int width, int height);
+    void SetDeviceScaleFactor(float scale);
     void SetAcceleratedPaintCallback(AcceleratedPaintCallback cb) { accel_cb_ = std::move(cb); }
     void SetCpuPaintCallback(CpuPaintCallback cb) { cpu_cb_ = std::move(cb); }
 
@@ -85,6 +86,7 @@ private:
     std::mutex               mu_;
     int                      view_w_ { 1280 };
     int                      view_h_ { 720 };
+    float                    device_scale_factor_ { 1.0f };
     AcceleratedPaintCallback accel_cb_;
     CpuPaintCallback         cpu_cb_;
     CefRefCount              ref_count_;

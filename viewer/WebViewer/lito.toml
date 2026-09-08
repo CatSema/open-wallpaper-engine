@@ -2,6 +2,12 @@
 name = "owe-webviewer"
 version.workspace = true
 
+[source-groups.linux]
+sources = [
+  "EglPresenter.cppm",
+  "EglPresenter.cpp",
+]
+
 [[bin]]
 name = "WebViewer"
 module = "viewer.web"
@@ -9,10 +15,12 @@ sources = [
   "Web.cppm",
   "Presenter.cppm",
   "VulkanBlitter.cppm",
-  "EglPresenter.cppm",
   "VulkanBlitter.cpp",
-  "EglPresenter.cpp",
   "WebViewer.cpp",
+]
+
+when = [
+  { condition = 'target.os == "linux"', source-groups = ["linux"] },
 ]
 
 [usage]
@@ -68,15 +76,19 @@ visibility = "private"
 [external-dependencies.pkg-config.egl]
 workspace = true
 visibility = "private"
+condition = 'target.os == "linux"'
 
 [external-dependencies.pkg-config.gles]
 workspace = true
 visibility = "private"
+condition = 'target.os == "linux"'
 
 [external-dependencies.pkg-config.x11]
 workspace = true
 visibility = "private"
+condition = 'target.os == "linux"'
 
 [external-dependencies.pkg-config.wayland-egl]
 workspace = true
 visibility = "private"
+condition = 'target.os == "linux"'

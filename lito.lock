@@ -199,6 +199,22 @@ architectures = [
   "x86_64",
 ]
 
+[[packages.externals]]
+name = "cef-macos"
+source = "archive+https://cef-builds.spotifycdn.com/cef_binary_149.0.4%2Bg2f1bfd8%2Bchromium-149.0.7827.156_macosarm64_minimal.tar.bz2"
+checksum = "7eb30795aa583de17ce59ce38a420ef776a9f0412f9fe0e90306bf3dc94b0b62"
+architectures = [
+  "aarch64",
+]
+
+[[packages.externals]]
+name = "cef-macos"
+source = "archive+https://cef-builds.spotifycdn.com/cef_binary_149.0.4%2Bg2f1bfd8%2Bchromium-149.0.7827.156_macosx64_minimal.tar.bz2"
+checksum = "75639ff6181a63194b1aae1c69ad1aa7fc2033dcc92b11554c57844c86f4e4bb"
+architectures = [
+  "x86_64",
+]
+
 [[packages]]
 name = "owe-webviewer"
 version = "0.2.9"
@@ -215,8 +231,8 @@ dependencies = [
 
 [[packages]]
 name = "rstd-alloc"
-version = "0.1.1"
-source = "git+https://github.com/litocpp/rstd.git#84b50263f7eac255f43c307b482d12067885f044"
+version = "0.1.0"
+source = "git+https://github.com/litocpp/rstd.git#8ad75f4bbb814041092b99ae38782226409f7471"
 dependencies = [
   "rstd-core",
   "rstd-runtime",
@@ -224,29 +240,29 @@ dependencies = [
 
 [[packages]]
 name = "rstd-argparse"
-version = "0.1.1"
-source = "git+https://github.com/litocpp/rstd.git#84b50263f7eac255f43c307b482d12067885f044"
+version = "0.1.0"
+source = "git+https://github.com/litocpp/rstd.git#8ad75f4bbb814041092b99ae38782226409f7471"
 dependencies = [
   "rstd-std",
 ]
 
 [[packages]]
 name = "rstd-basic"
-version = "0.1.1"
-source = "git+https://github.com/litocpp/rstd.git#84b50263f7eac255f43c307b482d12067885f044"
+version = "0.1.0"
+source = "git+https://github.com/litocpp/rstd.git#8ad75f4bbb814041092b99ae38782226409f7471"
 
 [[packages]]
 name = "rstd-bench"
-version = "0.1.1"
-source = "git+https://github.com/litocpp/rstd.git#84b50263f7eac255f43c307b482d12067885f044"
+version = "0.1.0"
+source = "git+https://github.com/litocpp/rstd.git#8ad75f4bbb814041092b99ae38782226409f7471"
 dependencies = [
   "rstd-std",
 ]
 
 [[packages]]
 name = "rstd-core"
-version = "0.1.1"
-source = "git+https://github.com/litocpp/rstd.git#84b50263f7eac255f43c307b482d12067885f044"
+version = "0.1.0"
+source = "git+https://github.com/litocpp/rstd.git#8ad75f4bbb814041092b99ae38782226409f7471"
 dependencies = [
   "rstd-basic",
   "rstd-runtime",
@@ -254,24 +270,24 @@ dependencies = [
 
 [[packages]]
 name = "rstd-cppstd"
-version = "0.1.1"
-source = "git+https://github.com/litocpp/rstd.git#84b50263f7eac255f43c307b482d12067885f044"
+version = "0.1.0"
+source = "git+https://github.com/litocpp/rstd.git#8ad75f4bbb814041092b99ae38782226409f7471"
 dependencies = [
   "rstd-std",
 ]
 
 [[packages]]
 name = "rstd-dlopn"
-version = "0.1.1"
-source = "git+https://github.com/litocpp/rstd.git#84b50263f7eac255f43c307b482d12067885f044"
+version = "0.1.0"
+source = "git+https://github.com/litocpp/rstd.git#8ad75f4bbb814041092b99ae38782226409f7471"
 dependencies = [
   "rstd-std",
 ]
 
 [[packages]]
 name = "rstd-json"
-version = "0.1.1"
-source = "git+https://github.com/litocpp/rstd.git#84b50263f7eac255f43c307b482d12067885f044"
+version = "0.1.0"
+source = "git+https://github.com/litocpp/rstd.git#8ad75f4bbb814041092b99ae38782226409f7471"
 dependencies = [
   "rstd-core",
   "rstd-parse",
@@ -281,8 +297,8 @@ dependencies = [
 
 [[packages]]
 name = "rstd-log"
-version = "0.1.1"
-source = "git+https://github.com/litocpp/rstd.git#84b50263f7eac255f43c307b482d12067885f044"
+version = "0.1.0"
+source = "git+https://github.com/litocpp/rstd.git#8ad75f4bbb814041092b99ae38782226409f7471"
 dependencies = [
   "rstd-core",
   "rstd-std",
@@ -290,8 +306,8 @@ dependencies = [
 
 [[packages]]
 name = "rstd-parse"
-version = "0.1.1"
-source = "git+https://github.com/litocpp/rstd.git#84b50263f7eac255f43c307b482d12067885f044"
+version = "0.1.0"
+source = "git+https://github.com/litocpp/rstd.git#8ad75f4bbb814041092b99ae38782226409f7471"
 dependencies = [
   "rstd-alloc",
   "rstd-core",
@@ -299,24 +315,24 @@ dependencies = [
 
 [[packages]]
 name = "rstd-runtime"
-version = "0.1.1"
-source = "git+https://github.com/litocpp/rstd.git#84b50263f7eac255f43c307b482d12067885f044"
+version = "0.1.0"
+source = "git+https://github.com/litocpp/rstd.git#8ad75f4bbb814041092b99ae38782226409f7471"
 dependencies = [
   "rstd-basic",
 ]
 
 [[packages]]
 name = "rstd-serde"
-version = "0.1.1"
-source = "git+https://github.com/litocpp/rstd.git#84b50263f7eac255f43c307b482d12067885f044"
+version = "0.1.0"
+source = "git+https://github.com/litocpp/rstd.git#8ad75f4bbb814041092b99ae38782226409f7471"
 dependencies = [
   "rstd-alloc",
 ]
 
 [[packages]]
 name = "rstd-std"
-version = "0.1.1"
-source = "git+https://github.com/litocpp/rstd.git#84b50263f7eac255f43c307b482d12067885f044"
+version = "0.1.0"
+source = "git+https://github.com/litocpp/rstd.git#8ad75f4bbb814041092b99ae38782226409f7471"
 dependencies = [
   "rstd-alloc",
   "rstd-core",
@@ -324,8 +340,8 @@ dependencies = [
 
 [[packages]]
 name = "rstd-test"
-version = "0.1.1"
-source = "git+https://github.com/litocpp/rstd.git#84b50263f7eac255f43c307b482d12067885f044"
+version = "0.1.0"
+source = "git+https://github.com/litocpp/rstd.git#8ad75f4bbb814041092b99ae38782226409f7471"
 dependencies = [
   "rstd-std",
 ]
