@@ -68,8 +68,8 @@ i32 LimitRopeSubdivision(i32 requested, const ParticleObjectParseServices& servi
     const bool fog          = ShaderComboEnabled(material, info, "FOG");
     const bool fog_distance = ShaderComboEnabled(material, info, "FOG_DIST") ||
                               (fog && services.shader_environment.fog_distance);
-    const bool fog_height   = ShaderComboEnabled(material, info, "FOG_HEIGHT") ||
-                              (fog && services.shader_environment.fog_height);
+    const bool fog_height = ShaderComboEnabled(material, info, "FOG_HEIGHT") ||
+                            (fog && services.shader_environment.fog_height);
 
     // genericropeparticle always emits position (4), UV (2), and color (4).
     u32 output_components { 10 };
@@ -339,17 +339,17 @@ void BuildParticleObjectNode(ParticleObjectParseServices& services,
             if (std::abs(s) > 1e-6f) corigin[i] /= s;
         }
         spNodeOpt  = Some(Arc<SceneNode>::make(corigin,
-                                               Vector3f(child_ptr.child->scale.data()),
-                                               Vector3f(child_ptr.child->angles.data()),
-                                               child_ptr.child->name));
+                                              Vector3f(child_ptr.child->scale.data()),
+                                              Vector3f(child_ptr.child->angles.data()),
+                                              child_ptr.child->name));
         child_data = ChildData(*child_ptr.child);
 
     } else {
         p_particle_obj = &wppartobj.particleObj;
         spNodeOpt      = Some(Arc<SceneNode>::make(Vector3f(wppartobj.origin.data()),
-                                                   Vector3f(wppartobj.scale.data()),
-                                                   Vector3f(wppartobj.angles.data()),
-                                                   wppartobj.name));
+                                              Vector3f(wppartobj.scale.data()),
+                                              Vector3f(wppartobj.angles.data()),
+                                              wppartobj.name));
         auto& spNode   = *spNodeOpt;
         spNode->ID()   = wppartobj.id;
         if (! wppartobj.visible) {
@@ -458,13 +458,15 @@ void BuildParticleObjectNode(ParticleObjectParseServices& services,
 
     bool mat_ok = false;
     try {
-        auto material_result = BuildMaterial(vfs,
-                                             *services.shader_cache,
-                                             services.shader_environment,
-                                             particle_obj.material,
-                                             *services.scene,
-                                             rstd::move(shaderInfo),
-                                             GeometryStageRequirement::Required);
+        auto material_result =
+            BuildMaterial(vfs,
+                          *services.shader_cache,
+                          services.shader_environment,
+                          particle_obj.material,
+                          *services.scene,
+                          rstd::move(shaderInfo),
+                          services.geometry_shader_supported ? GeometryStageRequirement::Required
+                                                             : GeometryStageRequirement::Disabled);
         if (material_result.is_ok()) {
             auto material_build = rstd::move(material_result).unwrap_unchecked();
             material            = rstd::move(material_build.material);
@@ -542,9 +544,14 @@ void BuildParticleObjectNode(ParticleObjectParseServices& services,
                 }
                 mesh_maxcount = *capacity;
             }
-            SetRopeParticleMesh(mesh, particle_obj, mesh_maxcount, thick_format, render_rope_trail);
+            SetRopeParticleMesh(mesh,
+                                particle_obj,
+                                mesh_maxcount,
+                                thick_format,
+                                render_rope_trail,
+                                services.geometry_shader_supported);
         } else {
-            SetParticleMesh(mesh, mesh_maxcount, thick_format);
+            SetParticleMesh(mesh, mesh_maxcount, thick_format, services.geometry_shader_supported);
         }
     }
 
@@ -641,16 +648,17 @@ void ParseParticleObjImpl(SceneParseContext& context, wpscene::ParticleObject& p
     }
 
     ParticleObjectParseServices services {
-        .scene                  = context.scene.get(),
-        .vfs                    = context.vfs,
-        .shader_cache           = context.shader_cache.clone(),
-        .shader_environment     = context.shader_environment,
-        .geometry_shader_limits = context.geometry_shader_limits,
-        .global_base_uniforms   = context.global_base_uniforms,
-        .particle_runtime       = (*context.particle_runtime).clone(),
-        .ortho_w                = context.ortho_w,
-        .ortho_h                = context.ortho_h,
-        .construction_context   = &context,
+        .scene                     = context.scene.get(),
+        .vfs                       = context.vfs,
+        .shader_cache              = context.shader_cache.clone(),
+        .shader_environment        = context.shader_environment,
+        .geometry_shader_limits    = context.geometry_shader_limits,
+        .geometry_shader_supported = context.geometry_shader_supported,
+        .global_base_uniforms      = context.global_base_uniforms,
+        .particle_runtime          = (*context.particle_runtime).clone(),
+        .ortho_w                   = context.ortho_w,
+        .ortho_h                   = context.ortho_h,
+        .construction_context      = &context,
     };
     auto output = BuildParticleObject(services, particle);
     if (output.root.is_none()) return;

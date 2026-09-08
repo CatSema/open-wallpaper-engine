@@ -1,9 +1,25 @@
 #define GLFW_INCLUDE_VULKAN
+#include <vulkan/vulkan.h>
 #include <GLFW/glfw3.h>
+
 #include <cerrno>
+#ifdef __APPLE__
+#    include <condition_variable>
+#endif
+#include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
+#ifdef __APPLE__
+#    include <mutex>
+#    include <optional>
+#endif
+#include <thread>
 #include <unistd.h>
+
+#ifdef __APPLE__
+extern "C" VkResult oweCreateGlfwCocoaSurface(GLFWwindow*, VkInstance, VkSurfaceKHR*, int, int);
+extern "C" void     oweConfigureGlfwCocoaLayer(GLFWwindow*, int, int);
+#endif
 
 import rstd.cppstd;
 import rstd.log;
@@ -18,6 +34,119 @@ import viewer.audio;
 using namespace std;
 using namespace rstd::prelude;
 using namespace rstd::literals;
+
+#ifdef __APPLE__
+// CoreAudio tap/aggregate-device creation may synchronously wait for the
+// system-audio permission sheet or the HAL server. Keep that work away from
+// the GLFW/Cocoa thread. The worker publishes only the newest complete PCM
+// window; the SceneWallpaper API is still consumed on the viewer thread just
+// as it is on Linux.
+class AudioCaptureWorker {
+public:
+    AudioCaptureWorker()
+        : m_thread([this] {
+              run();
+          }) {}
+
+    ~AudioCaptureWorker() {
+        {
+            std::lock_guard lock(m_mutex);
+            m_stop    = true;
+            m_enabled = false;
+        }
+        m_condition.notify_one();
+        if (m_thread.joinable()) m_thread.join();
+    }
+
+    void set_enabled(bool enabled) {
+        {
+            std::lock_guard lock(m_mutex);
+            if (m_enabled == enabled) return;
+            m_enabled = enabled;
+        }
+        m_condition.notify_one();
+    }
+
+    bool snapshot(wavsen::audio::AudioPcmWindow& out) {
+        std::lock_guard lock(m_mutex);
+        if (! m_latest ||
+            (m_latest->generation == m_last_generation && m_latest->sequence == m_last_sequence))
+            return false;
+
+        out               = *m_latest;
+        m_last_generation = m_latest->generation;
+        m_last_sequence   = m_latest->sequence;
+        return true;
+    }
+
+private:
+    void run() {
+        wavsen::audio::AudioCapture capture;
+        bool                        capture_ready = false;
+        auto                        retry_at      = std::chrono::steady_clock::now();
+
+        for (;;) {
+            {
+                std::unique_lock lock(m_mutex);
+                m_condition.wait(lock, [this] {
+                    return m_stop || m_enabled;
+                });
+                if (m_stop) break;
+            }
+
+            if (! capture_ready) {
+                std::unique_lock lock(m_mutex);
+                if (m_condition.wait_until(lock, retry_at, [this] {
+                        return m_stop || ! m_enabled;
+                    })) {
+                    if (m_stop) break;
+                    continue;
+                }
+                lock.unlock();
+
+                if (! capture.init()) {
+                    retry_at = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+                    continue;
+                }
+                capture_ready = true;
+            }
+
+            wavsen::audio::AudioPcmWindow window {};
+            if (capture.snapshot(window)) {
+                std::lock_guard lock(m_mutex);
+                if (! m_stop && m_enabled) m_latest = window;
+            }
+
+            std::unique_lock lock(m_mutex);
+            if (! m_condition.wait_for(lock, std::chrono::milliseconds(5), [this] {
+                    return m_stop || ! m_enabled;
+                }))
+                continue;
+
+            if (m_stop) break;
+            lock.unlock();
+            capture.uninit();
+            capture_ready = false;
+            retry_at      = std::chrono::steady_clock::now();
+            {
+                std::lock_guard latest_lock(m_mutex);
+                m_latest.reset();
+            }
+        }
+
+        if (capture_ready) capture.uninit();
+    }
+
+    std::mutex                                   m_mutex;
+    std::condition_variable                      m_condition;
+    std::thread                                  m_thread;
+    bool                                         m_stop    = false;
+    bool                                         m_enabled = false;
+    std::optional<wavsen::audio::AudioPcmWindow> m_latest;
+    std::uint64_t                                m_last_generation = 0;
+    std::uint64_t                                m_last_sequence   = 0;
+};
+#endif
 
 class StdinJsonControl {
 public:
@@ -183,7 +312,16 @@ struct UserData {
 };
 
 extern "C" {
-void framebuffer_size_callback(GLFWwindow*, int width, int height) {}
+#ifdef __APPLE__
+void framebuffer_size_callback(GLFWwindow* window, int width, int height) {
+    // GLFW reports backing pixels here when the Cocoa Retina framebuffer hint
+    // is enabled. Keep the CAMetalLayer drawable size synchronized on the
+    // Cocoa main thread after a display/scale or window-size change.
+    oweConfigureGlfwCocoaLayer(window, width, height);
+}
+#else
+void framebuffer_size_callback(GLFWwindow*, int, int) {}
+#endif
 
 void mouse_button_callback(GLFWwindow* win, int button, int action, int /*mods*/) {
     UserData* data = static_cast<UserData*>(glfwGetWindowUserPointer(win));
@@ -196,7 +334,15 @@ void mouse_button_callback(GLFWwindow* win, int button, int action, int /*mods*/
 void cursor_position_callback(GLFWwindow* win, double xpos, double ypos) {
     UserData* data = static_cast<UserData*>(glfwGetWindowUserPointer(win));
     if (! data || ! data->psw || data->mouse_position_locked) return;
+#ifdef __APPLE__
+    int width  = 0;
+    int height = 0;
+    glfwGetWindowSize(win, &width, &height);
+    if (width <= 0 || height <= 0) return;
+    data->psw->mouseInput(xpos / static_cast<double>(width), ypos / static_cast<double>(height));
+#else
     data->psw->mouseInput(xpos / data->width, ypos / data->height);
+#endif
 }
 
 void cursor_enter_callback(GLFWwindow* win, int entered) {
@@ -214,9 +360,19 @@ Option<std::array<double, 2>> parseMousePosition(const std::string& value) {
     double y  = 0.0;
     auto   xs = value.substr(0, comma);
     auto   ys = value.substr(comma + 1);
-    auto   xr = std::from_chars(xs.data(), xs.data() + xs.size(), x);
-    auto   yr = std::from_chars(ys.data(), ys.data() + ys.size(), y);
+#ifdef __APPLE__
+    // Floating-point std::from_chars is unavailable before macOS 26 in this
+    // libc++; parse with strtod instead (target API level is macOS 15).
+    char* xs_end = nullptr;
+    char* ys_end = nullptr;
+    x            = std::strtod(xs.c_str(), &xs_end);
+    y            = std::strtod(ys.c_str(), &ys_end);
+    if (xs_end != xs.c_str() + xs.size() || ys_end != ys.c_str() + ys.size()) return None();
+#else
+    auto xr = std::from_chars(xs.data(), xs.data() + xs.size(), x);
+    auto yr = std::from_chars(ys.data(), ys.data() + ys.size(), y);
     if (xr.ec != std::errc {} || yr.ec != std::errc {}) return None();
+#endif
     return Some(std::array { std::clamp(x, 0.0, 1.0), std::clamp(y, 0.0, 1.0) });
 }
 
@@ -227,9 +383,28 @@ int main(int argc, char** argv) {
 
     auto args                = viewer::ParseSceneViewerArgs(argc, argv);
     auto [w_width, w_height] = args.resolution;
+
     viewer::InitGlfwPlatformHint(/*force_x11=*/false);
+#ifdef __APPLE__
+    // GLFW normally dlopens libvulkan.1.dylib on macOS. That lookup is
+    // fragile for the Nix development shell (and can fail even though the
+    // executable already links the Vulkan loader). Use the loader exported by
+    // the executable so GLFW and the renderer query the same Vulkan dispatch.
+    glfwInitVulkanLoader(vkGetInstanceProcAddr);
+    if (! glfwInit()) {
+        std::cerr << "Failed to initialize GLFW\n";
+        return -1;
+    }
+#else
     glfwInit();
+#endif
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+#ifdef __APPLE__
+    // Keep the backing framebuffer in physical pixels. The window remains
+    // sized in Cocoa points, while the CAMetalLayer/Vulkan swapchain use the
+    // 2x (or display-specific) backing dimensions.
+    glfwWindowHint(GLFW_COCOA_RETINA_FRAMEBUFFER, GLFW_TRUE);
+#endif
     // Bulk-scan path: WP_HEADLESS=1 hides the window so a scan loop over
     // hundreds of pkgs doesn't spam the desktop. Compile/render still
     // runs against the offscreen surface — stderr captures shader errors.
@@ -237,35 +412,64 @@ int main(int argc, char** argv) {
         glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
     }
     GLFWwindow* window = glfwCreateWindow(w_width, w_height, "WP", nullptr, nullptr);
-
+#ifdef __APPLE__
+    if (window == nullptr) {
+        std::cerr << "Failed to create GLFW window\n";
+        glfwTerminate();
+        return -1;
+    }
+#endif
+    int render_width  = w_width;
+    int render_height = w_height;
+#ifdef __APPLE__
+    glfwGetFramebufferSize(window, &render_width, &render_height);
+    if (render_width <= 0) render_width = w_width;
+    if (render_height <= 0) render_height = w_height;
+#endif
     UserData data;
     data.width  = w_width;
     data.height = w_height;
 
     owe::RenderInitInfo info;
     info.enable_valid_layer = args.enable_valid_layer;
-    info.width              = w_width;
-    info.height             = w_height;
+    info.width              = static_cast<std::uint16_t>(render_width);
+    info.height             = static_cast<std::uint16_t>(render_height);
     info.msaa_samples       = args.msaa_samples.to_primitive();
 
     auto& sf_info = info.surface_info;
     {
         uint32_t glfwExtCount = 0;
         auto     exts         = glfwGetRequiredInstanceExtensions(&glfwExtCount);
+#ifdef __APPLE__
+        if (exts == nullptr || glfwExtCount == 0) {
+            std::cerr << "GLFW did not provide Vulkan instance extensions\n";
+            glfwDestroyWindow(window);
+            glfwTerminate();
+            return -1;
+        }
+#endif
         for (uint32_t i = 0; i < glfwExtCount; i++) {
             sf_info.instanceExts.emplace_back(exts[i]);
         }
-
+#ifdef __APPLE__
+        sf_info.createSurfaceOp = [window, render_width, render_height](VkInstance    inst,
+                                                                        VkSurfaceKHR* surface) {
+            return oweCreateGlfwCocoaSurface(window, inst, surface, render_width, render_height);
+        };
+#else
         sf_info.createSurfaceOp = [window](VkInstance inst, VkSurfaceKHR* surface) {
             return glfwCreateWindowSurface(inst, window, nullptr, surface);
         };
+#endif
     }
 
+#ifndef __APPLE__
     if (window == nullptr) {
         std::cout << "Failed to create GLFW window" << std::endl;
         glfwTerminate();
         return -1;
     }
+#endif
 
     auto* psw = new owe::SceneWallpaper();
     data.psw  = psw;
@@ -339,15 +543,45 @@ int main(int argc, char** argv) {
         if (! locked_mouse) return;
         psw->mouseEnter(true);
         psw->mouseInput((*locked_mouse)[0], (*locked_mouse)[1]);
+#ifdef __APPLE__
+        int window_width  = 0;
+        int window_height = 0;
+        glfwGetWindowSize(window, &window_width, &window_height);
+        if (window_width > 0 && window_height > 0) {
+            glfwSetCursorPos(
+                window, (*locked_mouse)[0] * window_width, (*locked_mouse)[1] * window_height);
+        }
+#else
         glfwSetCursorPos(window, (*locked_mouse)[0] * w_width, (*locked_mouse)[1] * w_height);
+#endif
     };
     apply_locked_mouse();
 
-    StdinJsonControl            stdin_control(args.stdin_json);
+    StdinJsonControl stdin_control(args.stdin_json);
+#ifdef __APPLE__
+    AudioCaptureWorker audio_capture;
+#else
     wavsen::audio::AudioCapture audio_capture;
     auto                        next_audio_update = std::chrono::steady_clock::now();
-    bool                        audio_ended       = true;
-    auto                        update_audio      = [&] {
+#endif
+    bool audio_ended  = true;
+    auto update_audio = [&] {
+#ifdef __APPLE__
+        const bool demanded = audio_response_demand.load(std::memory_order_acquire);
+        audio_capture.set_enabled(demanded);
+        if (! demanded) {
+            if (! audio_ended) {
+                psw->endAudioResponse();
+                audio_ended = true;
+            }
+            return;
+        }
+        wavsen::audio::AudioPcmWindow window {};
+        if (audio_capture.snapshot(window)) {
+            audio_ended = false;
+            psw->setAudioPcmWindow(viewer::ConvertAudioWindow(window));
+        }
+#else
         if (! audio_response_demand.load(std::memory_order_acquire)) {
             if (audio_capture.is_inited()) audio_capture.uninit();
             if (! audio_ended) {
@@ -365,6 +599,7 @@ int main(int argc, char** argv) {
         if (audio_capture.snapshot(window)) {
             psw->setAudioPcmWindow(viewer::ConvertAudioWindow(window));
         }
+#endif
     };
 
     // Bulk-scan path: WP_COMPILE_ONLY=N waits N seconds after scene load
@@ -374,10 +609,29 @@ int main(int argc, char** argv) {
     if (const char* co = std::getenv("WP_COMPILE_ONLY"); co && co[0] != '\0') {
         int seconds = std::atoi(co);
         if (seconds <= 0) seconds = 2;
+#ifdef __APPLE__
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(seconds);
+        // Keep the Cocoa run loop alive while the render thread initializes
+        // the GLFW surface on the main thread. A blocking sleep would leave
+        // dispatch_sync_f waiting forever in headless compile-only runs.
+        while (std::chrono::steady_clock::now() < deadline) {
+            glfwWaitEventsTimeout(0.01);
+        }
+#else
         std::this_thread::sleep_for(std::chrono::seconds(seconds));
+#endif
     } else {
         while (! glfwWindowShouldClose(window)) {
+#ifdef __APPLE__
+            // Keep the Cocoa run loop responsive while MoltenVK drives the
+            // CAMetalLayer. A 30 Hz event wait can leave display-link/layer
+            // updates pending across multiple presents and lower the
+            // effective FIFO cadence. Rendering remains on the render thread;
+            // this only services GLFW/Cocoa events more frequently.
+            glfwWaitEventsTimeout(1.0 / 120.0);
+#else
             glfwWaitEventsTimeout(1.0 / 30.0);
+#endif
             stdin_control.poll(*psw);
             apply_locked_mouse();
             update_audio();

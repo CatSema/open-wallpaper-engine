@@ -30,6 +30,7 @@ struct SceneParseError {
 
 struct SceneParseCapabilities {
     bool directional_shadow { false };
+    bool geometry_shader_supported { true };
     u32  max_geometry_output_vertices { 256 };
     u32  max_geometry_total_output_components { 1024 };
 };

@@ -36,6 +36,7 @@ struct PipelineResourceRequest {
     std::vector<VkDynamicState> dynamic_states { VK_DYNAMIC_STATE_VIEWPORT,
                                                  VK_DYNAMIC_STATE_SCISSOR };
     VkFormat                    color_format { VK_FORMAT_R8G8B8A8_UNORM };
+    VkImageLayout               color_initial_layout { VK_IMAGE_LAYOUT_UNDEFINED };
     VkImageLayout               color_final_layout { VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
     VkAttachmentLoadOp          color_load_op { VK_ATTACHMENT_LOAD_OP_DONT_CARE };
     VkAttachmentLoadOp          depth_load_op { VK_ATTACHMENT_LOAD_OP_DONT_CARE };
@@ -460,6 +461,7 @@ inline RenderPassResourceDesc MakeRenderPassResourceDesc(const PipelineResourceR
         .color_format           = request.color_format,
         .depth_format           = VK_FORMAT_D32_SFLOAT,
         .samples                = request.multisample.rasterizationSamples,
+        .color_initial_layout   = request.color_initial_layout,
         .color_final_layout     = request.color_final_layout,
         .color_load_op          = request.color_load_op,
         .resolve_final_layout   = request.color_final_layout,
@@ -469,7 +471,7 @@ inline RenderPassResourceDesc MakeRenderPassResourceDesc(const PipelineResourceR
         .has_color_attachment   = request.has_color_attachment,
         .has_resolve_attachment = request.has_color_attachment &&
                                   request.multisample.rasterizationSamples != VK_SAMPLE_COUNT_1_BIT,
-        .has_depth_attachment   = request.has_depth_attachment,
+        .has_depth_attachment = request.has_depth_attachment,
     };
     if (request.color_load_op == VK_ATTACHMENT_LOAD_OP_LOAD) {
         desc.color_initial_layout =

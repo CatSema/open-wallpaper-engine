@@ -23,6 +23,12 @@ options = [
 ]
 threads = true
 
+[[when]]
+condition = 'target.os == "macos"'
+
+[when.usage]
+linker-options = ["-Wl,-sectcreate,__TEXT,__info_plist,Info.plist"]
+
 [dependencies.owe-core]
 workspace = true
 visibility = "private"

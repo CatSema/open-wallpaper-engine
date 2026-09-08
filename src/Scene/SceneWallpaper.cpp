@@ -108,9 +108,9 @@ float LocalTimeOfDay() {
     auto time      = local->time();
     auto subsecond = static_cast<double>(time.nanosecond().to_primitive()) /
                      static_cast<double>(rstd::time::NANOS_PER_SEC.to_primitive());
-    auto seconds   = double(time.hour().to_primitive() * 3600 + time.minute().to_primitive() * 60 +
-                            time.second().to_primitive()) +
-                     subsecond;
+    auto seconds = double(time.hour().to_primitive() * 3600 + time.minute().to_primitive() * 60 +
+                          time.second().to_primitive()) +
+                   subsecond;
     return static_cast<float>(seconds / 86400.0);
 }
 
@@ -531,7 +531,7 @@ void SceneRenderController::onDraw() {
         auto       load_bench = loadBenchView();
         auto       first_frame_span =
             first_draw ? SceneLoadSpan(load_bench, &SceneLoadProbeIds::render_first_frame)
-                       : rstd::bench::probe::SpanGuard {};
+                             : rstd::bench::probe::SpanGuard {};
         auto first_frame_prepare_span =
             first_draw ? SceneLoadSpan(load_bench, &SceneLoadProbeIds::render_first_frame_prepare)
                        : rstd::bench::probe::SpanGuard {};
@@ -548,7 +548,7 @@ void SceneRenderController::onDraw() {
         {
             owe::script::FrameInputs fi;
             fi.frametime   = static_cast<float>(m_scene->Runtime().Frame().delta.to_primitive() *
-                                                m_speed.to_primitive());
+                                              m_speed.to_primitive());
             fi.runtime     = static_cast<float>(m_scene->Runtime().Frame().elapsed.to_primitive());
             fi.time_of_day = LocalTimeOfDay();
             auto ortho     = m_scene->Ortho();
@@ -1164,8 +1164,8 @@ void SceneRuntimeController::on(MainMsg::SetSpeed_payload&& m) {
 void SceneRuntimeController::on(MainMsg::SetUserProperty_payload&& m) {
     const std::string property = CanonicalSceneUserPropertyKey(m.key);
     auto              current  = m_user_properties.get(rstd::cppstd::as_str(property).unwrap());
-    Json              prop = current.is_some() ? MergeUserPropertyDescriptor(**current, m.value)
-                                               : MakeUserPropertyDescriptor(rstd::move(m.value));
+    Json              prop     = current.is_some() ? MergeUserPropertyDescriptor(**current, m.value)
+                                                   : MakeUserPropertyDescriptor(rstd::move(m.value));
     m_config.user_properties.insert(
         ::alloc::string::String::make(rstd::cppstd::as_str(property).unwrap()), prop.clone());
     m_user_properties.insert(::alloc::string::String::make(rstd::cppstd::as_str(property).unwrap()),
@@ -1356,16 +1356,17 @@ void SceneRuntimeController::loadScene() {
             rstd::mut_ref<fs::VFS>::from_raw_parts(&vfs),
             rstd::mut_ref<wavsen::audio::SoundManager>::from_raw_parts(m_sound_manager.get()),
             SceneParseOptions {
-                .load_bench      = loadBenchView(),
-                .user_properties = Some(
+                       .load_bench      = loadBenchView(),
+                       .user_properties = Some(
                     rstd::ref<rstd::json::Map>::from_raw_parts(rstd::addressof(m_user_properties))),
-                .shader_cache_dir = rstd::move(shader_cache_dir),
-                .capabilities =
+                       .shader_cache_dir = rstd::move(shader_cache_dir),
+                       .capabilities =
                     SceneParseCapabilities {
-                        .directional_shadow = m_render_capabilities->directional_shadow(),
-                        .max_geometry_output_vertices =
+                               .directional_shadow = m_render_capabilities->directional_shadow(),
+                               .geometry_shader_supported = m_render_capabilities->geometry_shader,
+                               .max_geometry_output_vertices =
                             u32(m_render_capabilities->max_geometry_output_vertices),
-                        .max_geometry_total_output_components =
+                               .max_geometry_total_output_components =
                             u32(m_render_capabilities->max_geometry_total_output_components),
                     },
             });

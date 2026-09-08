@@ -299,13 +299,16 @@ auto BuildMaterial(fs::VFS& vfs, ShaderCache& shader_cache,
         sd_source_keys.push_back(std::move(source_key));
         sd_original_sources.push_back(source);
         sd_units.push_back({
-            .stage           = stage,
-            .src             = std::move(source),
-            .preprocess_info = {},
+                                .stage           = stage,
+                                .src             = std::move(source),
+                                .preprocess_info = {},
         });
     };
     add_shader_unit(ShaderType::VERTEX, shaderPath + ".vert");
     bool has_geometry_stage = geometry_stage == GeometryStageRequirement::Required;
+    if (geometry_stage == GeometryStageRequirement::Disabled) {
+        shader_info_ref.combos[rstd::cppstd::to_string(WE_CB_GS_ENABLED)] = "0";
+    }
     if (has_geometry_stage) {
         std::string geom_path = shaderPath + ".geom";
         if (vfs.metadata(fs::ToPath(geom_path)).is_err()) {
@@ -483,14 +486,14 @@ auto BuildMaterial(fs::VFS& vfs, ShaderCache& shader_cache,
     shader_info_ref.combos     = ShaderParser::ResolveShaderCombos(shader_info_ref, input_combos);
     auto scene_id              = as_string_view(scene.SceneId());
     auto variant_desc          = MakeSceneShaderVariantDesc(scene_id,
-                                                            wpmat,
-                                                            shader_info_ref,
-                                                            input_combos,
-                                                            sd_units,
-                                                            sd_source_keys,
-                                                            sd_original_sources,
-                                                            texinfos,
-                                                            has_geometry_stage);
+                                                   wpmat,
+                                                   shader_info_ref,
+                                                   input_combos,
+                                                   sd_units,
+                                                   sd_source_keys,
+                                                   sd_original_sources,
+                                                   texinfos,
+                                                   has_geometry_stage);
     variant_desc.texture_slots = material.textures;
 
     if (! ShaderParser::CompileToSpv(

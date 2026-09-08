@@ -50,6 +50,7 @@ enum class GeometryStageRequirement
 {
     None,
     Required,
+    Disabled,
 };
 
 struct MaterialBuildError {
@@ -85,8 +86,9 @@ void GenCardMesh(SceneMesh&, array<float, 2>, array<float, 2> = { 1.0f, 1.0f },
                  const Eigen::Vector3f& = Eigen::Vector3f::Zero());
 auto ReadDirectDrawQuad(const wpscene::Material&) -> Option<DirectDrawQuad>;
 void GenDirectDrawQuadMesh(SceneMesh&, float, const DirectDrawQuad&);
-void SetParticleMesh(SceneMesh&, u32, bool);
-void SetRopeParticleMesh(SceneMesh&, const wpscene::Particle&, u32, bool, bool);
+void SetParticleMesh(SceneMesh&, u32, bool, bool geometry_shader_supported);
+void SetRopeParticleMesh(SceneMesh&, const wpscene::Particle&, u32, bool, bool,
+                         bool geometry_shader_supported);
 
 struct SceneUniformConfigDraft {
     Arc<SceneNode>         node;
@@ -130,6 +132,7 @@ struct SceneParseContext {
     ShaderValueMap         global_base_uniforms;
     SceneShaderEnvironment shader_environment;
     GeometryShaderLimits   geometry_shader_limits;
+    bool                   geometry_shader_supported { true };
     Option<Arc<SceneNode>> effect_camera_node;
     Option<Arc<SceneNode>> global_camera_node;
     Option<Arc<SceneNode>> global_perspective_camera_node;
@@ -245,6 +248,7 @@ struct ParticleObjectParseServices {
     Arc<ShaderCache>       shader_cache;
     SceneShaderEnvironment shader_environment;
     GeometryShaderLimits   geometry_shader_limits;
+    bool                   geometry_shader_supported { true };
     ShaderValueMap         global_base_uniforms;
     Arc<ParticleRuntime>   particle_runtime;
     i32                    ortho_w { 0 };
@@ -319,10 +323,11 @@ struct ProcessOpts {
 
 SceneParseContext BuildContext(fs::VFS&, ref<str> scene_id, const wpscene::SceneMetadata&,
                                array<i32, 2>                ortho_extent,
-                               Option<ref<rstd::json::Map>> user_properties    = None(),
-                               Option<rstd::path::PathBuf>  shader_cache_dir   = None(),
-                               GeometryShaderLimits         geometry_limits    = {},
-                               bool                         directional_shadow = false);
+                               Option<ref<rstd::json::Map>> user_properties           = None(),
+                               Option<rstd::path::PathBuf>  shader_cache_dir          = None(),
+                               GeometryShaderLimits         geometry_limits           = {},
+                               bool                         directional_shadow        = false,
+                               bool                         geometry_shader_supported = true);
 
 void IndexSceneDocument(SceneParseContext&, ref<wpscene::SceneDocument>, slice<SceneObjectVar>);
 void ProcessContainers(SceneParseContext&, mut_ref<SceneObjectVar[]>);

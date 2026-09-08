@@ -801,6 +801,7 @@ void RecordGenerateMipmaps(vvk::CommandBuffer&, const ImageParameters&);
 
 struct DeviceCapabilities {
     bool           timeline_semaphore { false };
+    bool           geometry_shader { false };
     bool           synchronization2 { false };
     bool           push_descriptor { false };
     rstd::uint32_t max_push_descriptors { 0 };

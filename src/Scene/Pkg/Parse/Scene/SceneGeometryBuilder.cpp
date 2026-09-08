@@ -91,37 +91,121 @@ void GenDirectDrawQuadMesh(SceneMesh& mesh, float edge, const DirectDrawQuad& po
     mesh.AddIndexArray(SceneIndexArray(indices.as_slice()));
 }
 
-void SetParticleMesh(SceneMesh& mesh, u32 count, bool thick_format) {
+void SetParticleMesh(SceneMesh& mesh, u32 count, bool thick_format,
+                     bool geometry_shader_supported) {
+    if (geometry_shader_supported) {
+        auto specs =
+            thick_format
+                ? MakeAttrSet(
+                      { VAttr::Position, VAttr::TexCoordVec4, VAttr::Color, VAttr::TexCoordVec4C1 })
+                : MakeAttrSet({ VAttr::Position, VAttr::TexCoordVec4, VAttr::Color });
+        mesh.SetPrimitive(MeshPrimitive::POINT);
+        mesh.AddVertexArray(SceneVertexArray(rstd::move(specs), rstd::as_cast<usize>(count)));
+        mesh.GetVertexArray(usize(0)).SetOption(as_string_view(WE_CB_THICK_FORMAT), thick_format);
+        mesh.GetVertexArray(usize(0)).SetOption(as_string_view(WE_CB_GS_ENABLED), true);
+        return;
+    }
+    // Geometry-less path (WE's native GS_ENABLED=0 shader variant): the CPU
+    // expands each particle into a 4-vertex quad (per-corner TexCoordVec4 +
+    // a_TexCoordC2), 6 indices per particle — the macOS replacement for the
+    // geometry-shader billboard expansion (no Metal driver supports it).
     auto specs =
         thick_format
-            ? MakeAttrSet(
-                  { VAttr::Position, VAttr::TexCoordVec4, VAttr::Color, VAttr::TexCoordVec4C1 })
-            : MakeAttrSet({ VAttr::Position, VAttr::TexCoordVec4, VAttr::Color });
-    mesh.SetPrimitive(MeshPrimitive::POINT);
-    mesh.AddVertexArray(SceneVertexArray(rstd::move(specs), rstd::as_cast<usize>(count)));
-    mesh.GetVertexArray(usize(0)).SetOption(as_string_view(WE_CB_THICK_FORMAT), thick_format);
+            ? MakeAttrSet({ VAttr::Position,
+                            VAttr::TexCoordVec4,
+                            VAttr::TexCoordC2,
+                            VAttr::Color,
+                            VAttr::TexCoordVec4C1 })
+            : MakeAttrSet(
+                  { VAttr::Position, VAttr::TexCoordVec4, VAttr::TexCoordC2, VAttr::Color });
+    mesh.SetPrimitive(MeshPrimitive::TRIANGLE);
+    mesh.AddVertexArray(
+        SceneVertexArray(rstd::move(specs), rstd::as_cast<usize>(count) * usize(4)));
+    auto& vertices = mesh.GetVertexArray(usize(0));
+    vertices.SetOption(as_string_view(WE_CB_THICK_FORMAT), thick_format);
+    vertices.SetOption(as_string_view(WE_CB_GS_ENABLED), false);
+    const std::size_t           particle_count = count.to_primitive();
+    std::vector<rstd::uint32_t> indices;
+    indices.reserve(particle_count * std::size_t(6));
+    for (std::size_t particle = 0; particle < particle_count; ++particle) {
+        const rstd::uint32_t base = rstd::uint32_t(particle * std::size_t(4));
+        // 0 1 3 / 1 2 3 — matches the old port's quad triangulation.
+        indices.insert(indices.end(),
+                       { base + rstd::uint32_t(0),
+                         base + rstd::uint32_t(1),
+                         base + rstd::uint32_t(3),
+                         base + rstd::uint32_t(1),
+                         base + rstd::uint32_t(2),
+                         base + rstd::uint32_t(3) });
+    }
+    mesh.AddIndexArray(SceneIndexArray(
+        slice<rstd::uint32_t>::from_raw_parts(indices.data(), usize(indices.size()))));
 }
 
 void SetRopeParticleMesh(SceneMesh& mesh, const wpscene::Particle& particle, u32 count,
-                         bool thick_format, bool trail_renderer) {
+                         bool thick_format, bool trail_renderer, bool geometry_shader_supported) {
     (void)particle;
+    if (geometry_shader_supported) {
+        auto specs = thick_format ? MakeAttrSet({ VAttr::PositionVec4,
+                                                  VAttr::TexCoordVec4,
+                                                  VAttr::TexCoordVec4C1,
+                                                  VAttr::TexCoordVec4C2,
+                                                  VAttr::TexCoordVec4C3,
+                                                  VAttr::Color })
+                                  : MakeAttrSet({ VAttr::PositionVec4,
+                                                  VAttr::TexCoordVec4,
+                                                  VAttr::TexCoordVec4C1,
+                                                  VAttr::TexCoordVec3C2,
+                                                  VAttr::Color });
+        mesh.SetPrimitive(MeshPrimitive::POINT);
+        mesh.AddVertexArray(SceneVertexArray(rstd::move(specs), rstd::as_cast<usize>(count)));
+        mesh.GetVertexArray(usize(0)).SetOption(trail_renderer
+                                                    ? as_string_view(WE_PRENDER_ROPE_TRAIL)
+                                                    : as_string_view(WE_PRENDER_ROPE),
+                                                true);
+        mesh.GetVertexArray(usize(0)).SetOption(as_string_view(WE_CB_THICK_FORMAT), thick_format);
+        mesh.GetVertexArray(usize(0)).SetOption(as_string_view(WE_CB_GS_ENABLED), true);
+        return;
+    }
+    // Geometry-less rope: 4 vertices per trail point (per-corner UVs in
+    // a_TexCoordC3/C4), 6 indices per segment quad — old-port CPU expansion.
     auto specs = thick_format ? MakeAttrSet({ VAttr::PositionVec4,
                                               VAttr::TexCoordVec4,
                                               VAttr::TexCoordVec4C1,
                                               VAttr::TexCoordVec4C2,
                                               VAttr::TexCoordVec4C3,
+                                              VAttr::TexCoordC4,
                                               VAttr::Color })
                               : MakeAttrSet({ VAttr::PositionVec4,
                                               VAttr::TexCoordVec4,
                                               VAttr::TexCoordVec4C1,
                                               VAttr::TexCoordVec3C2,
+                                              VAttr::TexCoordC3,
                                               VAttr::Color });
-    mesh.SetPrimitive(MeshPrimitive::POINT);
-    mesh.AddVertexArray(SceneVertexArray(rstd::move(specs), rstd::as_cast<usize>(count)));
-    mesh.GetVertexArray(usize(0)).SetOption(trail_renderer ? as_string_view(WE_PRENDER_ROPE_TRAIL)
-                                                           : as_string_view(WE_PRENDER_ROPE),
-                                            true);
-    mesh.GetVertexArray(usize(0)).SetOption(as_string_view(WE_CB_THICK_FORMAT), thick_format);
+    mesh.SetPrimitive(MeshPrimitive::TRIANGLE);
+    mesh.AddVertexArray(
+        SceneVertexArray(rstd::move(specs), rstd::as_cast<usize>(count) * usize(4)));
+    auto& vertices = mesh.GetVertexArray(usize(0));
+    vertices.SetOption(trail_renderer ? as_string_view(WE_PRENDER_ROPE_TRAIL)
+                                      : as_string_view(WE_PRENDER_ROPE),
+                       true);
+    vertices.SetOption(as_string_view(WE_CB_THICK_FORMAT), thick_format);
+    vertices.SetOption(as_string_view(WE_CB_GS_ENABLED), false);
+    const std::size_t           point_count = count.to_primitive();
+    std::vector<rstd::uint32_t> indices;
+    indices.reserve(point_count * std::size_t(6));
+    for (std::size_t point = 0; point < point_count; ++point) {
+        const rstd::uint32_t base = rstd::uint32_t(point * std::size_t(4));
+        indices.insert(indices.end(),
+                       { base + rstd::uint32_t(0),
+                         base + rstd::uint32_t(1),
+                         base + rstd::uint32_t(3),
+                         base + rstd::uint32_t(1),
+                         base + rstd::uint32_t(2),
+                         base + rstd::uint32_t(3) });
+    }
+    mesh.AddIndexArray(SceneIndexArray(
+        slice<rstd::uint32_t>::from_raw_parts(indices.data(), usize(indices.size()))));
 }
 
 } // namespace owe
