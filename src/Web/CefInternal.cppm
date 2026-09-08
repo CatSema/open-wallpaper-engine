@@ -22,8 +22,8 @@ public:
 
     CefRefPtr<CefBrowserProcessHandler> GetBrowserProcessHandler() override { return this; }
     CefRefPtr<CefRenderProcessHandler>  GetRenderProcessHandler() override { return this; }
-    void                                OnBeforeCommandLineProcessing(const CefString&          process_type,
-                                                                      CefRefPtr<CefCommandLine> cmd) override;
+    void OnBeforeCommandLineProcessing(const CefString&          process_type,
+                                       CefRefPtr<CefCommandLine> cmd) override;
 
     void OnContextInitialized() override;
     void OnContextCreated(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,

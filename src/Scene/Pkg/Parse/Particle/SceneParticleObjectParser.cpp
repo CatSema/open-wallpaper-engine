@@ -68,8 +68,8 @@ i32 LimitRopeSubdivision(i32 requested, const ParticleObjectParseServices& servi
     const bool fog          = ShaderComboEnabled(material, info, "FOG");
     const bool fog_distance = ShaderComboEnabled(material, info, "FOG_DIST") ||
                               (fog && services.shader_environment.fog_distance);
-    const bool fog_height = ShaderComboEnabled(material, info, "FOG_HEIGHT") ||
-                            (fog && services.shader_environment.fog_height);
+    const bool fog_height   = ShaderComboEnabled(material, info, "FOG_HEIGHT") ||
+                              (fog && services.shader_environment.fog_height);
 
     // genericropeparticle always emits position (4), UV (2), and color (4).
     u32 output_components { 10 };
@@ -339,17 +339,17 @@ void BuildParticleObjectNode(ParticleObjectParseServices& services,
             if (std::abs(s) > 1e-6f) corigin[i] /= s;
         }
         spNodeOpt  = Some(Arc<SceneNode>::make(corigin,
-                                              Vector3f(child_ptr.child->scale.data()),
-                                              Vector3f(child_ptr.child->angles.data()),
-                                              child_ptr.child->name));
+                                               Vector3f(child_ptr.child->scale.data()),
+                                               Vector3f(child_ptr.child->angles.data()),
+                                               child_ptr.child->name));
         child_data = ChildData(*child_ptr.child);
 
     } else {
         p_particle_obj = &wppartobj.particleObj;
         spNodeOpt      = Some(Arc<SceneNode>::make(Vector3f(wppartobj.origin.data()),
-                                              Vector3f(wppartobj.scale.data()),
-                                              Vector3f(wppartobj.angles.data()),
-                                              wppartobj.name));
+                                                   Vector3f(wppartobj.scale.data()),
+                                                   Vector3f(wppartobj.angles.data()),
+                                                   wppartobj.name));
         auto& spNode   = *spNodeOpt;
         spNode->ID()   = wppartobj.id;
         if (! wppartobj.visible) {

@@ -33,13 +33,13 @@ public:
     FinPass(Desc&&);
     virtual ~FinPass();
 
-    bool             setFrameSurface(owe::FrameSurfaceLease,
-                                     rstd::mut_ref<rstd::dyn<resource_registry::ExternalResourcePreparer>>,
-                                     const DeviceCapabilities&, rstd::uint32_t graphics_queue_family);
-    void             setPresentFormat(VkFormat);
-    bool             setResultRequest(rstd::Option<TextureRequest>);
-    void             resetResourceUses();
-    void             declareResources(ResourceDeclarationContext&) override;
+    bool setFrameSurface(owe::FrameSurfaceLease,
+                         rstd::mut_ref<rstd::dyn<resource_registry::ExternalResourcePreparer>>,
+                         const DeviceCapabilities&, rstd::uint32_t graphics_queue_family);
+    void setPresentFormat(VkFormat);
+    bool setResultRequest(rstd::Option<TextureRequest>);
+    void resetResourceUses();
+    void declareResources(ResourceDeclarationContext&) override;
     PassResourceUses resourceUses() const override;
     auto             pipelineLayoutRequirement(const PreparedPassResources&) const
         -> Result<Option<PipelineLayoutRequirement>, resource::ResourceError> override;

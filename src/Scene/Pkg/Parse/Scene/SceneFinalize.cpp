@@ -374,9 +374,9 @@ Box<Scene> FinalizeScene(SceneParseContext& context) {
                     auto       layer      = CopyableArcHold((*parent_ref->puppet_layer).clone());
                     auto       local_base = node->LocalFrame();
                     auto       update     = [node,
-                                   layer,
-                                   attachment_index = *attachment_index,
-                                   local_base       = rstd::move(local_base)](f64 time) {
+                                             layer,
+                                             attachment_index = *attachment_index,
+                                             local_base       = rstd::move(local_base)](f64 time) {
                         auto anchor =
                             layer.value->attachmentTransform(attachment_index, time.to_primitive());
                         if (anchor.is_none()) return;

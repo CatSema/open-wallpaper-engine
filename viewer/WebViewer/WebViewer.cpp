@@ -48,9 +48,9 @@ auto ParseWebViewerArgs(int argc, char** argv) -> Result<WebViewerArgs, owe::cli
             .help("path to a workshop/<id>/ directory containing project.json + index.html"_str)
             .required());
     auto width  = command.add_arg(Arg<i32>::value("width"_str, from_str_parser<i32>())
-                                     .long_name("width"_str)
-                                     .help("initial window width in pixels"_str)
-                                     .default_value("1280"_str));
+                                      .long_name("width"_str)
+                                      .help("initial window width in pixels"_str)
+                                      .default_value("1280"_str));
     auto height = command.add_arg(Arg<i32>::value("height"_str, from_str_parser<i32>())
                                       .long_name("height"_str)
                                       .help("initial window height in pixels"_str)

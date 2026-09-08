@@ -471,7 +471,7 @@ inline RenderPassResourceDesc MakeRenderPassResourceDesc(const PipelineResourceR
         .has_color_attachment   = request.has_color_attachment,
         .has_resolve_attachment = request.has_color_attachment &&
                                   request.multisample.rasterizationSamples != VK_SAMPLE_COUNT_1_BIT,
-        .has_depth_attachment = request.has_depth_attachment,
+        .has_depth_attachment   = request.has_depth_attachment,
     };
     if (request.color_load_op == VK_ATTACHMENT_LOAD_OP_LOAD) {
         desc.color_initial_layout =

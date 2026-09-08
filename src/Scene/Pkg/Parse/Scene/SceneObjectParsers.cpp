@@ -297,9 +297,9 @@ void InitContext(SceneParseContext& context, fs::VFS& vfs, const wpscene::SceneM
 void ParseSoundObjImpl(SceneParseContext& context, wpscene::SoundObject& obj,
                        wavsen::audio::SoundManager& sm) {
     auto node  = Arc<SceneNode>::make(Vector3f(obj.origin.data()),
-                                     Vector3f(obj.scale.data()),
-                                     Vector3f(obj.angles.data()),
-                                     obj.name);
+                                      Vector3f(obj.scale.data()),
+                                      Vector3f(obj.angles.data()),
+                                      obj.name);
     node->ID() = i32(obj.id);
     if (! obj.visible) node->SetVisible(false);
     if (! obj.visible_user.empty())
@@ -374,9 +374,9 @@ void ParseModelObjImpl(SceneParseContext& context, wpscene::ModelObject& model_o
     }
 
     auto node  = Arc<SceneNode>::make(Vector3f(model_obj.origin.data()),
-                                     Vector3f(model_obj.scale.data()),
-                                     Vector3f(model_obj.angles.data()),
-                                     model_obj.name);
+                                      Vector3f(model_obj.scale.data()),
+                                      Vector3f(model_obj.angles.data()),
+                                      model_obj.name);
     node->ID() = model_obj.id;
     node->SetPerspective(model_obj.perspective);
     node->SetReflected(model_obj.reflected);
@@ -478,11 +478,11 @@ void ParseModelObjImpl(SceneParseContext& context, wpscene::ModelObject& model_o
             ShaderInfo shadow_info;
             shadow_info.baseConstSvs = context.global_base_uniforms;
             auto shadow_result       = BuildMaterial(vfs,
-                                               *context.shader_cache,
-                                               context.shader_environment,
-                                               shadow_material,
-                                               *context.scene,
-                                               rstd::move(shadow_info));
+                                                     *context.shader_cache,
+                                                     context.shader_environment,
+                                                     shadow_material,
+                                                     *context.scene,
+                                                     rstd::move(shadow_info));
             if (shadow_result.is_ok()) {
                 auto shadow_build                   = rstd::move(shadow_result).unwrap_unchecked();
                 shadow_build.material.depth_clamp   = true;
@@ -651,9 +651,9 @@ SceneParseContext BuildContext(fs::VFS& vfs, ref<str> scene_id, const wpscene::S
 void ParseContainerObj(SceneParseContext& context, const wpscene::ContainerObject& obj) {
     PrepareAnimationBindings(context, obj);
     auto node  = Arc<SceneNode>::make(Vector3f(obj.origin.data()),
-                                     Vector3f(obj.scale.data()),
-                                     Vector3f(obj.angles.data()),
-                                     obj.name);
+                                      Vector3f(obj.scale.data()),
+                                      Vector3f(obj.angles.data()),
+                                      obj.name);
     node->ID() = i32(obj.id);
     if (obj.parallax.authored || obj.disable_propagation ||
         ! wpscene::IsZeroParallaxDepth(obj.parallax.depth)) {

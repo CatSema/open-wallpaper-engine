@@ -118,7 +118,7 @@ VkResult TransImgLayout(const vvk::Queue& queue, vvk::CommandBuffer& cmd,
         };
         const bool    depth_layout = layout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
         VkAccessFlags dst_access   = depth_layout ? VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
-                                                      VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT
+                                                        VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT
                                                   : VK_ACCESS_MEMORY_READ_BIT;
         VkPipelineStageFlags dst_stage = depth_layout
                                              ? VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
@@ -492,8 +492,8 @@ Option<VmaImageParameters> TextureCache::CreateTex(TextureKey tex_key) {
         VkSamplerCreateInfo sam_info = GenSamplerInfo(tex_key);
         VkFormat            format   = ToVkType(tex_key.format);
         VkExtent3D          ext { static_cast<rstd::uint32_t>(tex_key.width.to_primitive()),
-                         static_cast<rstd::uint32_t>(tex_key.height.to_primitive()),
-                         1 };
+                                  static_cast<rstd::uint32_t>(tex_key.height.to_primitive()),
+                                  1 };
         const bool depth_usage = (tex_key.usage & VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT) != 0;
         const auto properties  = m_device.gpu().GetFormatProperties(format);
         VkFormatFeatureFlags required_features {};
@@ -840,12 +840,12 @@ struct TextureCache::VideoRegistry {
         auto next_w = std::max(width, yuv_max_width);
         auto next_h = std::max(height, yuv_max_height);
         auto r      = wavsen::video::YuvToRgba::create(device.instance_handle(),
-                                                  *device.gpu(),
-                                                  *device.handle(),
-                                                  u32(device.graphics_queue().family_index),
-                                                  *device.graphics_queue().handle,
-                                                  u32(next_w),
-                                                  u32(next_h));
+                                                       *device.gpu(),
+                                                       *device.handle(),
+                                                       u32(device.graphics_queue().family_index),
+                                                       *device.graphics_queue().handle,
+                                                       u32(next_w),
+                                                       u32(next_h));
         if (r.is_err()) {
             rstd_error("CreateVideoTex: YuvToRgba create failed: {}",
                        std::move(r).unwrap_err().message);
@@ -971,9 +971,9 @@ bool TextureCache::VideoRegistry::Runtime::upload_apple_frame(
     }
     slot.metal_texture = metal_texture;
     auto imported      = CreateImportedMetalTextureImage(*device,
-                                                    metal_texture,
-                                                    frame.view().width.to_primitive(),
-                                                    frame.view().height.to_primitive());
+                                                         metal_texture,
+                                                         frame.view().width.to_primitive(),
+                                                         frame.view().height.to_primitive());
     if (imported.is_none()) {
         retire_apple_upload_slot(slot);
         rstd_error("PumpVideoTextures[{}]: failed to import Metal video texture into Vulkan",
@@ -1147,12 +1147,12 @@ TextureCache::CreateVideoTex(const Image&                                image,
     };
     VkExtent3D ext { runtime.width, runtime.height, 1 };
     auto       img_opt = CreateImage(m_device,
-                               ext,
-                               /*miplevel=*/1u,
-                               VK_FORMAT_R8G8B8A8_UNORM,
-                               sampler_info,
-                               VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_STORAGE_BIT |
-                                   VK_IMAGE_USAGE_SAMPLED_BIT);
+                                     ext,
+                                     /*miplevel=*/1u,
+                                     VK_FORMAT_R8G8B8A8_UNORM,
+                                     sampler_info,
+                                     VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_STORAGE_BIT |
+                                         VK_IMAGE_USAGE_SAMPLED_BIT);
     if (! img_opt) {
         rstd_error("CreateVideoTex: VkImage allocation failed for {}", image.key);
         return rstd::None();
@@ -1270,7 +1270,7 @@ TextureCache::CreateVideoTex(const Image&                                image,
     img_slots.slots[0] = std::move(target_image);
     auto runtime_owner = rstd::sync::Arc<dyn<TextureAllocationRuntime>>::make(rstd::move(runtime));
     auto allocation    = rstd::sync::Arc<TextureAllocation>::make(rstd::move(img_slots),
-                                                               Some(runtime_owner.clone()));
+                                                                  Some(runtime_owner.clone()));
     registry->runtimes.push(runtime_owner.downgrade());
     return Some(rstd::move(allocation));
 }

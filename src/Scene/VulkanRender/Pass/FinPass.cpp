@@ -234,7 +234,7 @@ void FinPass::prepare(Scene& scene, const Device& device, PassPrepareContext& co
                         .dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO,
                         .alphaBlendOp        = VK_BLEND_OP_ADD,
                         .colorWriteMask      = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
-                                          VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT,
+                                               VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT,
                     };
                     PipelineResourceRequest request {
                         .pipeline_layout = *layout,

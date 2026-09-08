@@ -317,9 +317,9 @@ void GenRopeParticleData(slice<ExtractInstance> instances, const ParticleSubSyst
                     const auto  ep        = render_position(next);
                     const float trail_pos = static_cast<float>(index - begin) + sequence_offset;
                     // Control point offset: perpendicular to segment, based on end rotation.
-                    Eigen::Vector3f cp_vec = Eigen::AngleAxisf(next.rotation[2] + 1.57079632679f,
-                                                               Eigen::Vector3f::UnitZ()) *
-                                             Eigen::Vector3f { 0.0f, next.size * 0.25f, 0.0f };
+                    Eigen::Vector3f cp_vec  = Eigen::AngleAxisf(next.rotation[2] + 1.57079632679f,
+                                                                Eigen::Vector3f::UnitZ()) *
+                                              Eigen::Vector3f { 0.0f, next.size * 0.25f, 0.0f };
                     Eigen::Vector3f pos_vec = ep - sp;
                     cp_vec = pos_vec.normalized().dot(cp_vec) > 0.0f ? cp_vec : -cp_vec;
                     const Eigen::Vector3f scp        = sp + cp_vec;

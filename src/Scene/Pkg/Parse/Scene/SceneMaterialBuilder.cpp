@@ -299,9 +299,9 @@ auto BuildMaterial(fs::VFS& vfs, ShaderCache& shader_cache,
         sd_source_keys.push_back(std::move(source_key));
         sd_original_sources.push_back(source);
         sd_units.push_back({
-                                .stage           = stage,
-                                .src             = std::move(source),
-                                .preprocess_info = {},
+            .stage           = stage,
+            .src             = std::move(source),
+            .preprocess_info = {},
         });
     };
     add_shader_unit(ShaderType::VERTEX, shaderPath + ".vert");
@@ -486,14 +486,14 @@ auto BuildMaterial(fs::VFS& vfs, ShaderCache& shader_cache,
     shader_info_ref.combos     = ShaderParser::ResolveShaderCombos(shader_info_ref, input_combos);
     auto scene_id              = as_string_view(scene.SceneId());
     auto variant_desc          = MakeSceneShaderVariantDesc(scene_id,
-                                                   wpmat,
-                                                   shader_info_ref,
-                                                   input_combos,
-                                                   sd_units,
-                                                   sd_source_keys,
-                                                   sd_original_sources,
-                                                   texinfos,
-                                                   has_geometry_stage);
+                                                            wpmat,
+                                                            shader_info_ref,
+                                                            input_combos,
+                                                            sd_units,
+                                                            sd_source_keys,
+                                                            sd_original_sources,
+                                                            texinfos,
+                                                            has_geometry_stage);
     variant_desc.texture_slots = material.textures;
 
     if (! ShaderParser::CompileToSpv(
