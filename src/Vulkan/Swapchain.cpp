@@ -105,7 +105,7 @@ bool Swapchain::Create(Device& device, VkSurfaceKHR surface, VkExtent2D extent, 
     rstd::uint32_t image_count = surfaceCapabilities.minImageCount + 1;
     if (surfaceCapabilities.maxImageCount > 0 && image_count > surfaceCapabilities.maxImageCount)
         image_count = surfaceCapabilities.maxImageCount;
-#if ! defined(__APPLE__)
+#if ! __is_target_os(macos)
     surfaceCapabilities.currentExtent = swap.m_extent;
 #endif
     swap.m_extent = GetSwapChainExtent(surfaceCapabilities, extent);

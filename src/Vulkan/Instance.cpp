@@ -3,7 +3,7 @@ module;
 #include <rstd/macro.hpp>
 #include "vvk/macros.hpp"
 
-#if defined(__APPLE__)
+#if __is_target_os(macos)
 #    include <vulkan/vulkan.h>
 #    include <vulkan/vulkan_metal.h>
 #endif
@@ -23,7 +23,7 @@ constexpr rstd::array<InstanceLayer, 0> base_inst_layers {};
 // VK_EXT_debug_utils is required everywhere. MoltenVK additionally needs
 // portability enumeration; keep that extension Apple-only so Linux keeps its
 // original instance extension set and create flags.
-#if defined(__APPLE__)
+#if __is_target_os(macos)
 constexpr rstd::array<Extension, 2> base_inst_exts {
     Extension { true, VK_EXT_DEBUG_UTILS_EXTENSION_NAME },
     Extension { false, "VK_KHR_portability_enumeration" }
@@ -92,7 +92,7 @@ VkResult CreatInstance(vvk::Instance* inst, std::span<const std::string_view> ex
     // object type before vkExportMetalObjectsEXT can return the MTLDevice.
     // Keep this pNext optional so the same instance path remains valid on
     // non-Apple Vulkan implementations.
-#if defined(__APPLE__)
+#if __is_target_os(macos)
     VkExportMetalObjectCreateInfoEXT metal_export_info {
         .sType            = VK_STRUCTURE_TYPE_EXPORT_METAL_OBJECT_CREATE_INFO_EXT,
         .pNext            = nullptr,

@@ -12,7 +12,9 @@ module;
 #include "include/cef_render_handler.h"
 #include "include/cef_render_process_handler.h"
 #include "include/cef_v8.h"
-#include "include/wrapper/cef_library_loader.h"
+#if __is_target_os(macos)
+#    include "include/wrapper/cef_library_loader.h"
+#endif
 
 export module weweb:cef;
 
@@ -70,7 +72,7 @@ export using ::CefV8Handler;
 export using ::CefV8Value;
 export using ::CefV8ValueList;
 export using ::CefWindowInfo;
-#if defined(__APPLE__)
+#if __is_target_os(macos)
 export using ::cef_load_library;
 export using ::cef_unload_library;
 #endif

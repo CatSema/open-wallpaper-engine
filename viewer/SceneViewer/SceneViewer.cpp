@@ -3,20 +3,20 @@
 #include <GLFW/glfw3.h>
 
 #include <cerrno>
-#ifdef __APPLE__
+#if __is_target_os(macos)
 #    include <condition_variable>
 #endif
 #include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
-#ifdef __APPLE__
+#if __is_target_os(macos)
 #    include <mutex>
 #    include <optional>
 #endif
 #include <thread>
 #include <unistd.h>
 
-#ifdef __APPLE__
+#if __is_target_os(macos)
 extern "C" VkResult oweCreateGlfwCocoaSurface(GLFWwindow*, VkInstance, VkSurfaceKHR*, int, int);
 extern "C" void     oweConfigureGlfwCocoaLayer(GLFWwindow*, int, int);
 #endif
@@ -35,7 +35,7 @@ using namespace std;
 using namespace rstd::prelude;
 using namespace rstd::literals;
 
-#ifdef __APPLE__
+#if __is_target_os(macos)
 // CoreAudio tap/aggregate-device creation may synchronously wait for the
 // system-audio permission sheet or the HAL server. Keep that work away from
 // the GLFW/Cocoa thread. The worker publishes only the newest complete PCM
@@ -312,7 +312,7 @@ struct UserData {
 };
 
 extern "C" {
-#ifdef __APPLE__
+#if __is_target_os(macos)
 void framebuffer_size_callback(GLFWwindow* window, int width, int height) {
     // GLFW reports backing pixels here when the Cocoa Retina framebuffer hint
     // is enabled. Keep the CAMetalLayer drawable size synchronized on the
@@ -334,7 +334,7 @@ void mouse_button_callback(GLFWwindow* win, int button, int action, int /*mods*/
 void cursor_position_callback(GLFWwindow* win, double xpos, double ypos) {
     UserData* data = static_cast<UserData*>(glfwGetWindowUserPointer(win));
     if (! data || ! data->psw || data->mouse_position_locked) return;
-#ifdef __APPLE__
+#if __is_target_os(macos)
     int width  = 0;
     int height = 0;
     glfwGetWindowSize(win, &width, &height);
@@ -360,7 +360,7 @@ Option<std::array<double, 2>> parseMousePosition(const std::string& value) {
     double y  = 0.0;
     auto   xs = value.substr(0, comma);
     auto   ys = value.substr(comma + 1);
-#ifdef __APPLE__
+#if __is_target_os(macos)
     // Floating-point std::from_chars is unavailable before macOS 26 in this
     // libc++; parse with strtod instead (target API level is macOS 15).
     char* xs_end = nullptr;
@@ -385,7 +385,7 @@ int main(int argc, char** argv) {
     auto [w_width, w_height] = args.resolution;
 
     viewer::InitGlfwPlatformHint(/*force_x11=*/false);
-#ifdef __APPLE__
+#if __is_target_os(macos)
     // GLFW normally dlopens libvulkan.1.dylib on macOS. That lookup is
     // fragile for the Nix development shell (and can fail even though the
     // executable already links the Vulkan loader). Use the loader exported by
@@ -399,7 +399,7 @@ int main(int argc, char** argv) {
     glfwInit();
 #endif
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-#ifdef __APPLE__
+#if __is_target_os(macos)
     // Keep the backing framebuffer in physical pixels. The window remains
     // sized in Cocoa points, while the CAMetalLayer/Vulkan swapchain use the
     // 2x (or display-specific) backing dimensions.
@@ -412,7 +412,7 @@ int main(int argc, char** argv) {
         glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
     }
     GLFWwindow* window = glfwCreateWindow(w_width, w_height, "WP", nullptr, nullptr);
-#ifdef __APPLE__
+#if __is_target_os(macos)
     if (window == nullptr) {
         std::cerr << "Failed to create GLFW window\n";
         glfwTerminate();
@@ -421,7 +421,7 @@ int main(int argc, char** argv) {
 #endif
     int render_width  = w_width;
     int render_height = w_height;
-#ifdef __APPLE__
+#if __is_target_os(macos)
     glfwGetFramebufferSize(window, &render_width, &render_height);
     if (render_width <= 0) render_width = w_width;
     if (render_height <= 0) render_height = w_height;
@@ -440,7 +440,7 @@ int main(int argc, char** argv) {
     {
         uint32_t glfwExtCount = 0;
         auto     exts         = glfwGetRequiredInstanceExtensions(&glfwExtCount);
-#ifdef __APPLE__
+#if __is_target_os(macos)
         if (exts == nullptr || glfwExtCount == 0) {
             std::cerr << "GLFW did not provide Vulkan instance extensions\n";
             glfwDestroyWindow(window);
@@ -451,7 +451,7 @@ int main(int argc, char** argv) {
         for (uint32_t i = 0; i < glfwExtCount; i++) {
             sf_info.instanceExts.emplace_back(exts[i]);
         }
-#ifdef __APPLE__
+#if __is_target_os(macos)
         sf_info.createSurfaceOp = [window, render_width, render_height](VkInstance    inst,
                                                                         VkSurfaceKHR* surface) {
             return oweCreateGlfwCocoaSurface(window, inst, surface, render_width, render_height);
@@ -463,7 +463,7 @@ int main(int argc, char** argv) {
 #endif
     }
 
-#ifndef __APPLE__
+#if ! __is_target_os(macos)
     if (window == nullptr) {
         std::cout << "Failed to create GLFW window" << std::endl;
         glfwTerminate();
@@ -543,7 +543,7 @@ int main(int argc, char** argv) {
         if (! locked_mouse) return;
         psw->mouseEnter(true);
         psw->mouseInput((*locked_mouse)[0], (*locked_mouse)[1]);
-#ifdef __APPLE__
+#if __is_target_os(macos)
         int window_width  = 0;
         int window_height = 0;
         glfwGetWindowSize(window, &window_width, &window_height);
@@ -558,7 +558,7 @@ int main(int argc, char** argv) {
     apply_locked_mouse();
 
     StdinJsonControl stdin_control(args.stdin_json);
-#ifdef __APPLE__
+#if __is_target_os(macos)
     AudioCaptureWorker audio_capture;
 #else
     wavsen::audio::AudioCapture audio_capture;
@@ -566,7 +566,7 @@ int main(int argc, char** argv) {
 #endif
     bool audio_ended  = true;
     auto update_audio = [&] {
-#ifdef __APPLE__
+#if __is_target_os(macos)
         const bool demanded = audio_response_demand.load(std::memory_order_acquire);
         audio_capture.set_enabled(demanded);
         if (! demanded) {
@@ -609,7 +609,7 @@ int main(int argc, char** argv) {
     if (const char* co = std::getenv("WP_COMPILE_ONLY"); co && co[0] != '\0') {
         int seconds = std::atoi(co);
         if (seconds <= 0) seconds = 2;
-#ifdef __APPLE__
+#if __is_target_os(macos)
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(seconds);
         // Keep the Cocoa run loop alive while the render thread initializes
         // the GLFW surface on the main thread. A blocking sleep would leave
@@ -622,7 +622,7 @@ int main(int argc, char** argv) {
 #endif
     } else {
         while (! glfwWindowShouldClose(window)) {
-#ifdef __APPLE__
+#if __is_target_os(macos)
             // Keep the Cocoa run loop responsive while MoltenVK drives the
             // CAMetalLayer. A 30 Hz event wait can leave display-link/layer
             // updates pending across multiple presents and lower the

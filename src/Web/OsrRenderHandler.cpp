@@ -62,7 +62,7 @@ void OsrRenderHandler::OnAcceleratedPaint(CefRefPtr<CefBrowser> /*browser*/, Pai
                                           const RectList& /*dirtyRects*/,
                                           const CefAcceleratedPaintInfo& info) {
     if (type != PET_VIEW) return;
-#if defined(__APPLE__)
+#if __is_target_os(macos)
     // CEF 149 exposes accelerated IOSurface metadata on macOS, but its
     // windowless shared-texture switch is not implemented for this platform.
     // The supported macOS path is OnPaint followed by a GPU upload.

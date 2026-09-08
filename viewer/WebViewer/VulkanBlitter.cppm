@@ -2,7 +2,7 @@ module;
 
 struct GLFWwindow;
 
-#if defined(__APPLE__)
+#if __is_target_os(macos)
 #    include <vulkan/vulkan.h>
 #endif
 
@@ -57,7 +57,7 @@ private:
     bool CreateCommandPool();
     bool CreateSyncObjects();
 
-#if defined(__APPLE__)
+#if __is_target_os(macos)
     bool EnsureCpuStaging(std::size_t size);
     void DestroyCpuStaging();
     bool UploadPendingCpuPaint();
@@ -105,7 +105,7 @@ private:
     // is enabled as a device extension.
     PFN_vkGetMemoryFdPropertiesKHR pfn_GetMemoryFdProperties_ { nullptr };
 
-#if defined(__APPLE__)
+#if __is_target_os(macos)
     bool portability_subset_supported_ { false };
 
     VkBuffer               cpu_staging_ { VK_NULL_HANDLE };

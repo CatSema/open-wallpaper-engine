@@ -2,7 +2,7 @@
 #include <GLFW/glfw3.h>
 #include <vulkan/vulkan.h>
 
-#ifdef __APPLE__
+#if __is_target_os(macos)
 
 #    include <CoreGraphics/CoreGraphics.h>
 #    include <dispatch/dispatch.h>

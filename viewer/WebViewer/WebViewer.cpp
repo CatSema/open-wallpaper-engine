@@ -1,6 +1,6 @@
 // weweb standalone GLFW + Vulkan + CEF (OSR) viewer.
 
-#if defined(__APPLE__)
+#if __is_target_os(macos)
 #    define GLFW_INCLUDE_VULKAN
 #    include <vulkan/vulkan.h>
 #endif
@@ -64,7 +64,7 @@ auto ParseWebViewerArgs(int argc, char** argv) -> Result<WebViewerArgs, owe::cli
         command.add_arg(Arg<String>::value("presenter"_str, string_parser())
                             .long_name("presenter"_str)
                             .help("present backend: vulkan (macOS) or egl/vulkan (Linux)"_str)
-#if defined(__APPLE__)
+#if __is_target_os(macos)
                             .default_value("vulkan"_str));
 #else
                             .default_value("egl"_str));
@@ -153,7 +153,7 @@ WindowMetrics GetWindowMetrics(GLFWwindow* window) {
 
     float scale_x = 1.0f;
     float scale_y = 1.0f;
-#if defined(__APPLE__)
+#if __is_target_os(macos)
     glfwGetWindowContentScale(window, &scale_x, &scale_y);
 #endif
     if (scale_x <= 0.0f || scale_y <= 0.0f) {
@@ -168,7 +168,7 @@ WindowMetrics GetWindowMetrics(GLFWwindow* window) {
     return metrics;
 }
 
-#if defined(__APPLE__)
+#if __is_target_os(macos)
 std::filesystem::path CefFrameworkRoot(const std::filesystem::path& exe_dir) {
     std::vector<std::filesystem::path> candidates;
     if (const char* override_path = std::getenv("OWE_CEF_FRAMEWORK_PATH");
@@ -230,12 +230,12 @@ int main(int argc, char** argv) {
     auto& manifest = *manifest_opt;
 
     // Keep Linux on its existing X11 path; macOS lets GLFW select Cocoa.
-#if defined(__APPLE__)
+#if __is_target_os(macos)
     viewer::InitGlfwPlatformHint(/*force_x11=*/false);
 #else
     viewer::InitGlfwPlatformHint(/*force_x11=*/true);
 #endif
-#if defined(__APPLE__)
+#if __is_target_os(macos)
     if (presenter_name == "vulkan") glfwInitVulkanLoader(vkGetInstanceProcAddr);
 #endif
     if (! glfwInit()) {
@@ -249,7 +249,7 @@ int main(int argc, char** argv) {
     }
     // The presenter owns the graphics context/device.
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-#if defined(__APPLE__)
+#if __is_target_os(macos)
     glfwWindowHint(GLFW_COCOA_RETINA_FRAMEBUFFER, GLFW_TRUE);
 #endif
 
@@ -282,7 +282,7 @@ int main(int argc, char** argv) {
     weweb::BrowserHost::InitOptions opts;
     opts.resources_dir = exe_dir;
     opts.locales_dir   = exe_dir / "locales";
-#if defined(__APPLE__)
+#if __is_target_os(macos)
     if (auto framework_root = CefFrameworkRoot(exe_dir); ! framework_root.empty()) {
         opts.resources_dir = framework_root / "Resources";
         opts.locales_dir   = opts.resources_dir / "locales";
@@ -314,7 +314,7 @@ int main(int argc, char** argv) {
     });
 #endif
 
-#if defined(__APPLE__)
+#if __is_target_os(macos)
     // CEF view sizes are in logical pixels. The presenter remains in physical
     // framebuffer pixels, so CEF applies the device scale factor internally.
     auto initial_metrics = GetWindowMetrics(window);
@@ -410,7 +410,7 @@ int main(int argc, char** argv) {
                     std::cerr << "webviewer: presenter Resize failed\n";
                     break;
                 }
-#if defined(__APPLE__)
+#if __is_target_os(macos)
                 host.OnResize(metrics.logical_width, metrics.logical_height, metrics.scale);
 #else
                 host.OnResize(static_cast<int>(presenter->Width()),

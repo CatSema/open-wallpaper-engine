@@ -4,7 +4,7 @@ module;
 #include <algorithm>
 #include <cstring>
 
-#if defined(__APPLE__)
+#if __is_target_os(macos)
 #    include <mach-o/dyld.h>
 #endif
 
@@ -20,7 +20,7 @@ using namespace rstd::literals;
 namespace weweb
 {
 
-#if defined(__APPLE__)
+#if __is_target_os(macos)
 namespace
 {
 
@@ -125,7 +125,7 @@ struct BrowserHost::Impl {
     // switches it forwards to subprocesses.
     int    saved_argc { 0 };
     char** saved_argv { nullptr };
-#if defined(__APPLE__)
+#if __is_target_os(macos)
     bool                  cef_loaded { false };
     std::filesystem::path cef_framework_binary;
 #endif
@@ -138,7 +138,7 @@ BrowserHost::~BrowserHost() { Shutdown(); }
 int BrowserHost::RunOrExitIfHelper(int argc, char** argv) {
     impl_->saved_argc = argc;
     impl_->saved_argv = argv;
-#if defined(__APPLE__)
+#if __is_target_os(macos)
     if (! impl_->cef_loaded) {
         if (! LoadCefFramework(IsCefHelperProcess(argc, argv), &impl_->cef_framework_binary)) {
             return 1;
@@ -148,7 +148,7 @@ int BrowserHost::RunOrExitIfHelper(int argc, char** argv) {
 #endif
     CefMainArgs main_args(argc, argv);
     const int   result = CefExecuteProcess(main_args, impl_->app.get(), nullptr);
-#if defined(__APPLE__)
+#if __is_target_os(macos)
     if (result >= 0) {
         cef_unload_library();
         impl_->cef_loaded = false;
@@ -163,7 +163,7 @@ bool BrowserHost::Init(const InitOptions& opts) {
         return false;
     }
 
-#if defined(__APPLE__)
+#if __is_target_os(macos)
     if (! impl_->cef_loaded) {
         if (! LoadCefFramework(false, &impl_->cef_framework_binary)) return false;
         impl_->cef_loaded = true;
@@ -192,7 +192,7 @@ bool BrowserHost::Init(const InitOptions& opts) {
         CefString cef_str { dest };
         cef_str = p.string();
     };
-#if defined(__APPLE__)
+#if __is_target_os(macos)
     // A single executable is used for the browser and CEF subprocesses in
     // development builds. The same entry point calls CefExecuteProcess
     // before entering the browser loop, so no helper app is required.
@@ -225,7 +225,7 @@ bool BrowserHost::Init(const InitOptions& opts) {
 
     if (! CefInitialize(main_args, settings, impl_->app.get(), nullptr)) {
         std::fprintf(stderr, "weweb: CefInitialize failed\n");
-#if defined(__APPLE__)
+#if __is_target_os(macos)
         cef_unload_library();
         impl_->cef_loaded = false;
 #endif
@@ -454,7 +454,7 @@ void BrowserHost::Shutdown() {
         CefShutdown();
         impl_->initialised = false;
     }
-#if defined(__APPLE__)
+#if __is_target_os(macos)
     if (impl_->cef_loaded) {
         cef_unload_library();
         impl_->cef_loaded = false;

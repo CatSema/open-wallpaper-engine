@@ -5,7 +5,7 @@ module;
 #include "vvk/macros.hpp"
 
 #include <unistd.h>
-#if defined(__APPLE__)
+#if __is_target_os(macos)
 #    include <array>
 #    include <vulkan/vulkan.h>
 #    include <vulkan/vulkan_metal.h>
@@ -620,7 +620,7 @@ private:
 wavsen::video::HwAccel ParseHwdec(std::string_view value) {
     if (value == "vulkan") return wavsen::video::HwAccel::Vulkan;
     if (value == "vaapi") return wavsen::video::HwAccel::Vaapi;
-#if defined(__APPLE__)
+#if __is_target_os(macos)
     if (value == "videotoolbox") return wavsen::video::HwAccel::VideoToolbox;
 #endif
     if (value == "none") return wavsen::video::HwAccel::None;
@@ -688,7 +688,7 @@ void CloseSyncFd(int fd) {
     if (fd >= 0) ::close(fd);
 }
 
-#if defined(__APPLE__)
+#if __is_target_os(macos)
 void* ExportMetalDeviceHandle(const Device& device) {
     auto export_metal_objects = reinterpret_cast<PFN_vkExportMetalObjectsEXT>(
         device.handle().Dispatch().vkGetDeviceProcAddr(*device.handle(),
@@ -790,7 +790,7 @@ struct TextureCache::VideoRegistry {
         Option<rstd::sync::Arc<VideoPlaybackState>> playback;
         Option<Box<wavsen::video::VideoDecoder>>    decoder;
         wavsen::video::Nv12Frame                    nv12_scratch;
-#if defined(__APPLE__)
+#if __is_target_os(macos)
         struct AppleUploadSlot {
             vvk::CommandBuffers          command_storage;
             vvk::CommandBuffer           command;
@@ -859,7 +859,7 @@ struct TextureCache::VideoRegistry {
 };
 
 TextureCache::VideoRegistry::Runtime::~Runtime() {
-#if defined(__APPLE__)
+#if __is_target_os(macos)
     for (auto& slot : apple_upload_slots) {
         retire_apple_upload_slot(slot);
         if (slot.metal_texture != nullptr) {
@@ -870,7 +870,7 @@ TextureCache::VideoRegistry::Runtime::~Runtime() {
 #endif
 }
 
-#if defined(__APPLE__)
+#if __is_target_os(macos)
 bool TextureCache::VideoRegistry::Runtime::prepare_apple_upload_slot(AppleUploadSlot& slot) {
     retire_apple_upload_slot(slot);
     return true;
@@ -1160,7 +1160,7 @@ TextureCache::CreateVideoTex(const Image&                                image,
     auto target_image = std::move(*img_opt);
     AssignImageGeneration(target_image);
     runtime.target = ToImageParameters(target_image);
-#if ! defined(__APPLE__)
+#if ! __is_target_os(macos)
     if (! registry->ensureYuv(m_device, runtime.width, runtime.height)) return None();
 #endif
 
@@ -1229,7 +1229,7 @@ TextureCache::CreateVideoTex(const Image&                                image,
         String::make(rstd::cppstd::as_str(registry->options.render_node).unwrap()),
     };
     const wavsen::video::Producer* producer = nullptr;
-#if defined(__APPLE__)
+#if __is_target_os(macos)
     const bool needs_shared_vulkan = requested_hwdec == wavsen::video::HwAccel::Vulkan;
 #else
     const bool needs_shared_vulkan = requested_hwdec != wavsen::video::HwAccel::None;
@@ -1251,7 +1251,7 @@ TextureCache::CreateVideoTex(const Image&                                image,
         return None();
     }
     runtime.decoder = rstd::Some(std::move(dec_r).unwrap());
-#if defined(__APPLE__)
+#if __is_target_os(macos)
     if ((*runtime.decoder)->kind() != wavsen::video::FrameKind::VideoToolbox &&
         ! registry->ensureYuv(m_device, runtime.width, runtime.height)) {
         return None();
@@ -1516,7 +1516,7 @@ void TextureCache::VideoRegistry::Runtime::Pump(double dt_seconds) {
         break;
     }
     case wavsen::video::FrameKind::VideoToolbox:
-#if defined(__APPLE__)
+#if __is_target_os(macos)
         if (apple_frame.is_none() || ! s.upload_apple_frame(*apple_frame, ip)) {
             cv = Err(wavsen::video::Error(rstd::format("VideoToolbox Metal→Vulkan copy failed")));
         } else {

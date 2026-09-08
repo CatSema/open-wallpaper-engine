@@ -64,7 +64,7 @@ constexpr rstd::array<Extension, 4> base_inst_exts {
     Extension { false, VK_KHR_EXTERNAL_SEMAPHORE_CAPABILITIES_EXTENSION_NAME },
     Extension { false, VK_KHR_EXTERNAL_FENCE_CAPABILITIES_EXTENSION_NAME },
 };
-#if defined(__APPLE__)
+#if __is_target_os(macos)
 constexpr rstd::array<Extension, 7> base_device_exts {
     // MoltenVK's swapchain→Metal present path uses the portability subset.
     Extension { false, "VK_KHR_portability_subset" },
@@ -95,7 +95,7 @@ constexpr rstd::array<Extension, 8> base_device_exts {
 #endif
 
 void AppendVideoDeviceExtensions(std::vector<Extension>& device_exts) {
-#if defined(__APPLE__)
+#if __is_target_os(macos)
     // VideoToolbox frames use the Metal-object import path. The DMA-BUF/DRM
     // and Vulkan-video extensions below are Linux-only interop requirements.
     (void)device_exts;
@@ -481,7 +481,7 @@ bool VulkanRender::Impl::init(RenderInitInfo info, SceneLoadBenchRecorderView lo
             rstd_error("resource registry init failed");
             return false;
         }
-#if defined(__APPLE__)
+#if __is_target_os(macos)
         if (! info.offscreen) {
             // Surface-mode FinPass uses a fullscreen graphics pass. The
             // swapchain format is fixed when Device::Create returns, so it
@@ -634,7 +634,7 @@ bool VulkanRender::Impl::CreateRenderingResource(RenderingResources& rr) {
     // pNext: it still signals every frame submission (the surface path
     // depends on it), only the fd export stays unavailable.
     {
-#if defined(__APPLE__)
+#if __is_target_os(macos)
         VkSemaphoreCreateInfo ci {
             .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
             .pNext = nullptr,
@@ -815,7 +815,7 @@ void VulkanRender::Impl::drawFrameSwapchain(Scene& scene) {
         *rr.sem_upload,
     };
     rstd::array<VkPipelineStageFlags, 2> wait_stages {
-#if defined(__APPLE__)
+#if __is_target_os(macos)
         VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
 #else
         VK_PIPELINE_STAGE_TRANSFER_BIT,

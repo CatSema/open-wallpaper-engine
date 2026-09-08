@@ -35,7 +35,7 @@ namespace
 
 constexpr std::uint64_t kFenceTimeoutNs = 5'000'000'000ull; // 5s
 
-#if defined(__APPLE__)
+#if __is_target_os(macos)
 constexpr const char* kPortabilitySubsetExtension = "VK_KHR_portability_subset";
 
 bool HasInstanceExtension(const std::vector<VkExtensionProperties>& extensions, const char* name) {
@@ -68,7 +68,7 @@ bool VulkanBlitter::Init(GLFWwindow* window) {
 void VulkanBlitter::Shutdown() {
     if (device_) vkDeviceWaitIdle(device_);
 
-#if defined(__APPLE__)
+#if __is_target_os(macos)
     DestroyCpuStaging();
 #endif
     DestroyOwnedImage();
@@ -132,7 +132,7 @@ bool VulkanBlitter::CreateInstance() {
         vkEnumerateInstanceExtensionProperties(nullptr, &available_count, available_exts.data()));
 
     std::vector<const char*> enabled_exts(glfw_exts, glfw_exts + glfw_count);
-#if defined(__APPLE__)
+#if __is_target_os(macos)
     if (HasInstanceExtension(available_exts, VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME)) {
         enabled_exts.push_back(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
     }
@@ -143,7 +143,7 @@ bool VulkanBlitter::CreateInstance() {
     ci.pApplicationInfo        = &app;
     ci.enabledExtensionCount   = static_cast<std::uint32_t>(enabled_exts.size());
     ci.ppEnabledExtensionNames = enabled_exts.data();
-#if defined(__APPLE__)
+#if __is_target_os(macos)
     if (HasInstanceExtension(available_exts, VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME)) {
         ci.flags |= VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
     }
@@ -184,7 +184,7 @@ bool VulkanBlitter::PickPhysicalDevice() {
             vkEnumerateDeviceExtensionProperties(pd, nullptr, &ecount, nullptr);
             std::vector<VkExtensionProperties> exts(ecount);
             vkEnumerateDeviceExtensionProperties(pd, nullptr, &ecount, exts.data());
-#if defined(__APPLE__)
+#if __is_target_os(macos)
             bool has_swapchain          = false;
             bool has_portability_subset = false;
 #else
@@ -194,7 +194,7 @@ bool VulkanBlitter::PickPhysicalDevice() {
             for (auto& e : exts) {
                 if (std::strcmp(e.extensionName, VK_KHR_SWAPCHAIN_EXTENSION_NAME) == 0)
                     has_swapchain = true;
-#if defined(__APPLE__)
+#if __is_target_os(macos)
                 if (std::strcmp(e.extensionName, kPortabilitySubsetExtension) == 0)
                     has_portability_subset = true;
 #else
@@ -210,7 +210,7 @@ bool VulkanBlitter::PickPhysicalDevice() {
                     has_fmt_list = true;
 #endif
             }
-#if defined(__APPLE__)
+#if __is_target_os(macos)
             if (! has_swapchain) continue;
             portability_subset_supported_ = has_portability_subset;
 #else
@@ -225,7 +225,7 @@ bool VulkanBlitter::PickPhysicalDevice() {
             return true;
         }
     }
-#if defined(__APPLE__)
+#if __is_target_os(macos)
     std::fprintf(stderr, "weweb: no suitable Vulkan device with graphics/present support\n");
 #else
     std::fprintf(stderr,
@@ -243,7 +243,7 @@ bool VulkanBlitter::CreateDevice() {
     qi.queueCount       = 1;
     qi.pQueuePriorities = &prio;
 
-#if defined(__APPLE__)
+#if __is_target_os(macos)
     std::vector<const char*> dev_exts { VK_KHR_SWAPCHAIN_EXTENSION_NAME };
     if (portability_subset_supported_) {
         dev_exts.push_back(kPortabilitySubsetExtension);
@@ -264,7 +264,7 @@ bool VulkanBlitter::CreateDevice() {
     ci.queueCreateInfoCount  = 1;
     ci.pQueueCreateInfos     = &qi;
     ci.enabledExtensionCount = static_cast<std::uint32_t>(std::size(dev_exts));
-#if defined(__APPLE__)
+#if __is_target_os(macos)
     ci.ppEnabledExtensionNames = dev_exts.data();
 #else
     ci.ppEnabledExtensionNames = dev_exts;
@@ -273,7 +273,7 @@ bool VulkanBlitter::CreateDevice() {
     VK_CHECK(vkCreateDevice(phys_, &ci, nullptr, &device_));
     vkGetDeviceQueue(device_, queue_family_, 0, &queue_);
 
-#if ! defined(__APPLE__)
+#if ! __is_target_os(macos)
     pfn_GetMemoryFdProperties_ = reinterpret_cast<PFN_vkGetMemoryFdPropertiesKHR>(
         vkGetDeviceProcAddr(device_, "vkGetMemoryFdPropertiesKHR"));
     if (! pfn_GetMemoryFdProperties_) {
@@ -284,7 +284,7 @@ bool VulkanBlitter::CreateDevice() {
     return true;
 }
 
-#if defined(__APPLE__)
+#if __is_target_os(macos)
 bool VulkanBlitter::EnsureCpuStaging(std::size_t size) {
     if (size == 0) return false;
     if (cpu_staging_ != VK_NULL_HANDLE && cpu_staging_size_ >= size) return true;
@@ -601,7 +601,7 @@ bool VulkanBlitter::EnsureOwnedImage(int width, int height) {
     if (owned_image_ != VK_NULL_HANDLE && owned_width_ == width && owned_height_ == height) {
         return true;
     }
-#if defined(__APPLE__)
+#if __is_target_os(macos)
     if (owned_image_ != VK_NULL_HANDLE) {
         if (in_flight_fence_[0] != VK_NULL_HANDLE &&
             vkWaitForFences(device_, 1, &in_flight_fence_[0], VK_TRUE, kFenceTimeoutNs) !=
@@ -668,7 +668,7 @@ void VulkanBlitter::DestroyOwnedImage() {
 }
 
 bool VulkanBlitter::AcceptCpuPaint(const CpuPaintFrame& frame) {
-#if ! defined(__APPLE__)
+#if ! __is_target_os(macos)
     (void)frame;
     return false;
 #else
@@ -970,7 +970,7 @@ bool VulkanBlitter::RenderFrame() {
         return false;
     }
 
-#if defined(__APPLE__)
+#if __is_target_os(macos)
     if (! UploadPendingCpuPaint()) return false;
 #endif
 

@@ -171,7 +171,7 @@ bool FinPass::prepareResourceStates(
     rstd::mut_ref<rstd::dyn<resource_registry::TextureStatePreparer>> states) {
     m_desc.result_barrier.Clear();
     if (m_desc.result_use.is_none()) return false;
-#if defined(__APPLE__)
+#if __is_target_os(macos)
     // Surface-mode MoltenVK uses a fullscreen graphics pass and samples the
     // scene result.  The offscreen path still uses the original transfer
     // state, as does every non-Apple build.
@@ -424,7 +424,7 @@ void FinPass::record(PassRecordContext& context) {
     // Transfer fallback for offscreen ExSwapchain surfaces (and for a
     // surface-format/framebuffer mismatch on Apple). Non-Apple builds keep
     // the original transfer-only path below.
-#if defined(__APPLE__)
+#if __is_target_os(macos)
     VkImageSubresourceRange range {
         .aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT,
         .baseMipLevel   = 0,
@@ -494,7 +494,7 @@ void FinPass::record(PassRecordContext& context) {
                       VK_FILTER_LINEAR);
     }
 
-#if defined(__APPLE__)
+#if __is_target_os(macos)
     if (m_graphics_path) {
         VkImageMemoryBarrier transfer_to_source {
             .sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
@@ -522,7 +522,7 @@ void FinPass::record(PassRecordContext& context) {
 }
 
 void FinPass::destory(const Device&) {
-#if defined(__APPLE__)
+#if __is_target_os(macos)
     m_present_framebuffer.reset();
     m_present_render_pass        = VK_NULL_HANDLE;
     m_present_framebuffer_view   = VK_NULL_HANDLE;

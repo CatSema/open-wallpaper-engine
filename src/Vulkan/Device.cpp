@@ -65,7 +65,7 @@ bool Device::CheckGPU(vvk::PhysicalDevice gpu, std::span<const Extension> exts,
         .pNext = requires_timeline_semaphore ? &timeline_features : nullptr,
     };
     gpu.GetFeatures2KHR(features2);
-#if ! defined(__APPLE__)
+#if ! __is_target_os(macos)
     if (! features2.features.geometryShader) return false;
 #endif
     if (requires_timeline_semaphore && ! timeline_features.timelineSemaphore) return false;
@@ -169,7 +169,7 @@ bool Device::Create(Instance& inst, std::span<const Extension> exts, VkExtent2D 
         rstd_error("required vulkan feature timelineSemaphore is not supported");
         return false;
     }
-#if ! defined(__APPLE__)
+#if ! __is_target_os(macos)
     if (! supported2.features.geometryShader) {
         rstd_error("required vulkan feature geometryShader is not supported");
         return false;
@@ -186,7 +186,7 @@ bool Device::Create(Instance& inst, std::span<const Extension> exts, VkExtent2D 
          (VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT)) ==
         (VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT);
     VkPhysicalDeviceFeatures enabled {};
-#if defined(__APPLE__)
+#if __is_target_os(macos)
     enabled.geometryShader = supported2.features.geometryShader;
 #else
     enabled.geometryShader = VK_TRUE;
