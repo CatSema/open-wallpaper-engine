@@ -20,16 +20,12 @@ linker-options = ["-Wl,-sectcreate,__TEXT,__info_plist,Info.plist"]
 
 [dependencies.rstd-log]
 workspace = true
-visibility = "private"
 
 [dependencies.owe-core]
 workspace = true
-visibility = "private"
 
 [dependencies.owe-viewer-common]
 workspace = true
-visibility = "private"
 
 [dependencies.owe-scene]
 workspace = true
-visibility = "private"

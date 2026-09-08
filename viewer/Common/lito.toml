@@ -23,28 +23,28 @@ options = [
 
 [dependencies.owe-core]
 workspace = true
-visibility = "public"
+pub = true
 
 [dependencies.owe-audio]
 workspace = true
-visibility = "public"
+pub = true
 
 [dependencies.rstd-std]
 workspace = true
-visibility = "public"
+pub = true
 
 [dependencies.rstd-cppstd]
 workspace = true
-visibility = "public"
+pub = true
 
 [dependencies.rstd-argparse]
 workspace = true
-visibility = "public"
+pub = true
 
 [dependencies.wavsen]
 workspace = true
-visibility = "public"
+pub = true
 
 [external-dependencies.pkg-config.glfw]
 workspace = true
-visibility = "public"
+pub = true

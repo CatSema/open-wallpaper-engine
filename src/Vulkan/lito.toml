@@ -29,44 +29,41 @@ options = [
 
 [dependencies.owe-core]
 workspace = true
-visibility = "public"
+pub = true
 
 [dependencies.owe-types]
 workspace = true
-visibility = "public"
+pub = true
 
 [dependencies.owe-utils]
 workspace = true
-visibility = "private"
 
 [dependencies.rstd-std]
 workspace = true
-visibility = "public"
+pub = true
 
 [dependencies.rstd-cppstd]
 workspace = true
-visibility = "public"
+pub = true
 
 [dependencies.rstd-log]
 workspace = true
-visibility = "public"
+pub = true
 
 [dependencies.wavsen]
 workspace = true
-visibility = "private"
 
 [dependencies.vvk]
 workspace = true
-visibility = "public"
+pub = true
 
 [dependencies.spirv-reflect]
 workspace = true
-visibility = "private"
 
 [external-dependencies.cmake.glslang]
 workspace = true
 targets = [
-  { name = "glslang::glslang", visibility = "public" },
-  { name = "glslang::SPIRV", visibility = "public" },
-  { name = "glslang::glslang-default-resource-limits", visibility = "public" },
+  { name = "glslang::glslang", pub = true },
+  { name = "glslang::SPIRV", pub = true },
+  { name = "glslang::glslang-default-resource-limits", pub = true },
 ]

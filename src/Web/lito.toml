@@ -31,15 +31,15 @@ options = [
 
 [dependencies.owe-core]
 workspace = true
-visibility = "public"
+pub = true
 
 [dependencies.rstd-std]
 workspace = true
-visibility = "public"
+pub = true
 
 [dependencies.rstd-cppstd]
 workspace = true
-visibility = "public"
+pub = true
 
 [external-dependencies.cmake.cef]
 workspace = true
@@ -53,6 +53,6 @@ targets = [
 workspace = true
 condition = 'target.os == "macos"'
 targets = [
-  { name = "libcef_lib", visibility = "public" },
-  { name = "libcef_dll_wrapper", visibility = "public" },
+  { name = "libcef_lib", pub = true },
+  { name = "libcef_dll_wrapper", pub = true },
 ]

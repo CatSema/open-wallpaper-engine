@@ -23,36 +23,27 @@ threads = true
 
 [dependencies.owe-audio]
 workspace = true
-visibility = "private"
 
 [dependencies.owe-core]
 workspace = true
-visibility = "private"
 
 [dependencies.owe-waywallen-producer]
 workspace = true
-visibility = "private"
 
 [dependencies.owe-web]
 workspace = true
-visibility = "private"
 
 [dependencies.rstd-argparse]
 workspace = true
-visibility = "private"
 
 [dependencies.rstd-cppstd]
 workspace = true
-visibility = "private"
 
 [dependencies.rstd-log]
 workspace = true
-visibility = "private"
 
 [dependencies.rstd-std]
 workspace = true
-visibility = "private"
 
 [dependencies.vvk]
 workspace = true
-visibility = "private"

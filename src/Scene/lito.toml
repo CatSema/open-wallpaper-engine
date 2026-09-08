@@ -187,64 +187,64 @@ options = [
 
 [dependencies.owe-core]
 workspace = true
-visibility = "public"
+pub = true
 
 [dependencies.owe-audio]
 workspace = true
-visibility = "public"
+pub = true
 
 [dependencies.owe-types]
 workspace = true
-visibility = "public"
+pub = true
 
 [dependencies.owe-utils]
 workspace = true
-visibility = "public"
+pub = true
 
 [dependencies.owe-vulkan]
 workspace = true
-visibility = "public"
+pub = true
 
 [dependencies.rstd-std]
 workspace = true
-visibility = "public"
+pub = true
 
 [dependencies.rstd-cppstd]
 workspace = true
-visibility = "public"
+pub = true
 
 [dependencies.rstd-json]
 workspace = true
-visibility = "public"
+pub = true
 
 [dependencies.rstd-log]
 workspace = true
-visibility = "public"
+pub = true
 
 [dependencies.rstd-argparse]
 workspace = true
-visibility = "public"
+pub = true
 
 [dependencies.rstd-bench]
 workspace = true
-visibility = "public"
+pub = true
 
 [dependencies.wavsen]
 workspace = true
-visibility = "public"
+pub = true
 
 [external-dependencies.cmake.quickjs]
 workspace = true
-targets = [{ name = "qjs", visibility = "public" }]
+targets = [{ name = "qjs", pub = true }]
 
 [external-dependencies.pkg-config.lz4]
 workspace = true
-visibility = "public"
+pub = true
 
 [external-dependencies.pkg-config.fontconfig]
 workspace = true
-visibility = "public"
+pub = true
 
 [external-dependencies.pkg-config.freetype]
 workspace = true
-visibility = "public"
+pub = true

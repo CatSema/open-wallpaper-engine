@@ -20,8 +20,8 @@ options = [
 
 [dependencies.owe-core]
 workspace = true
-visibility = "public"
+pub = true
 
 [dependencies.rstd-std]
 workspace = true
-visibility = "public"
+pub = true

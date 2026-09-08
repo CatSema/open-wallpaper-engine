@@ -24,20 +24,20 @@ options = [
 
 [dependencies.owe-core]
 workspace = true
-visibility = "public"
+pub = true
 
 [dependencies.owe-types]
 workspace = true
-visibility = "public"
+pub = true
 
 [dependencies.rstd-std]
 workspace = true
-visibility = "public"
+pub = true
 
 [dependencies.rstd-cppstd]
 workspace = true
-visibility = "public"
+pub = true
 
 [dependencies.rstd-log]
 workspace = true
-visibility = "public"
+pub = true

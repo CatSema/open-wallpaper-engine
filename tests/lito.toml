@@ -116,56 +116,54 @@ options = [
 
 [dependencies.owe-core]
 workspace = true
-visibility = "public"
+pub = true
 
 [dependencies.owe-audio]
 workspace = true
-visibility = "public"
+pub = true
 
 [dependencies.owe-scene]
 workspace = true
-visibility = "public"
+pub = true
 
 [dependencies.owe-vulkan]
 workspace = true
-visibility = "public"
+pub = true
 
 [dependencies.rstd-std]
 workspace = true
-visibility = "public"
+pub = true
 
 [dependencies.rstd-cppstd]
 workspace = true
-visibility = "public"
+pub = true
 
 [dependencies.rstd-json]
 workspace = true
-visibility = "public"
+pub = true
 
 [dependencies.rstd-log]
 workspace = true
-visibility = "public"
+pub = true
 
 [dependencies.rstd-argparse]
 workspace = true
-visibility = "public"
+pub = true
 
 [dependencies.rstd-bench]
 workspace = true
-visibility = "public"
+pub = true
 
 [dependencies.rstd-test]
 workspace = true
-visibility = "public"
+pub = true
 
 [dependencies.wavsen]
 workspace = true
-visibility = "public"
+pub = true
 
 [dependencies.vvk]
 workspace = true
-visibility = "private"
 
 [dependencies.spirv-reflect]
 workspace = true
-visibility = "private"

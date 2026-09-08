@@ -35,24 +35,24 @@ system-libraries = ["dl"]
 
 [dependencies.rstd-std]
 workspace = true
-visibility = "public"
+pub = true
 
 [dependencies.rstd-cppstd]
 workspace = true
-visibility = "public"
+pub = true
 
 [dependencies.rstd-json]
 workspace = true
-visibility = "public"
+pub = true
 
 [dependencies.rstd-log]
 workspace = true
-visibility = "public"
+pub = true
 
 [dependencies.rstd-argparse]
 workspace = true
-visibility = "public"
+pub = true
 
 [external-dependencies.cmake.eigen]
 workspace = true
-targets = [{ name = "Eigen3::Eigen", visibility = "public" }]
+targets = [{ name = "Eigen3::Eigen", pub = true }]

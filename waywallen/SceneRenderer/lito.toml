@@ -22,32 +22,24 @@ options = [
 
 [dependencies.owe-core]
 workspace = true
-visibility = "private"
 
 [dependencies.owe-scene]
 workspace = true
-visibility = "private"
 
 [dependencies.owe-vulkan]
 workspace = true
-visibility = "private"
 
 [dependencies.owe-waywallen-producer]
 workspace = true
-visibility = "private"
 
 [dependencies.rstd-argparse]
 workspace = true
-visibility = "private"
 
 [dependencies.rstd-cppstd]
 workspace = true
-visibility = "private"
 
 [dependencies.rstd-log]
 workspace = true
-visibility = "private"
 
 [dependencies.rstd-std]
 workspace = true
-visibility = "private"

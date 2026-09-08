@@ -22,69 +22,28 @@ default-members = ["viewer/SceneViewer", "viewer/WebViewer"]
 [workspace.package]
 version = "0.2.9"
 
-[workspace.dependencies.owe-core]
-path = "src/Core"
-
-[workspace.dependencies.owe-audio]
-path = "src/Audio"
-
-[workspace.dependencies.owe-types]
-path = "src/Scene/types"
-
-[workspace.dependencies.owe-utils]
-path = "src/Scene/Utils"
-
-[workspace.dependencies.owe-vulkan]
-path = "src/Vulkan"
-
-[workspace.dependencies.owe-scene]
-path = "src/Scene"
-
-[workspace.dependencies.owe-web]
-path = "src/Web"
-
-[workspace.dependencies.owe-viewer-common]
-path = "viewer/Common"
-
-[workspace.dependencies.owe-waywallen-producer]
-path = "waywallen/Producer"
-
-[workspace.dependencies.owe-waywallen-scene-renderer]
-path = "waywallen/SceneRenderer"
-
-[workspace.dependencies.owe-waywallen-web-renderer]
-path = "waywallen/WebRenderer"
-
-[workspace.dependencies.rstd-std]
-git = "https://github.com/litocpp/rstd.git"
-
-[workspace.dependencies.rstd-cppstd]
-git = "https://github.com/litocpp/rstd.git"
-
-[workspace.dependencies.rstd-json]
-git = "https://github.com/litocpp/rstd.git"
-
-[workspace.dependencies.rstd-log]
-git = "https://github.com/litocpp/rstd.git"
-
-[workspace.dependencies.rstd-argparse]
-git = "https://github.com/litocpp/rstd.git"
-
-[workspace.dependencies.rstd-bench]
-git = "https://github.com/litocpp/rstd.git"
-
-[workspace.dependencies.rstd-test]
-git = "https://github.com/litocpp/rstd.git"
-
-[workspace.dependencies.wavsen]
-git = "https://github.com/hypengw/wavsen.git"
-
-[workspace.dependencies.vvk]
-git = "https://github.com/litocpp/vvk.git"
-
-[workspace.dependencies.spirv-reflect]
-git = "https://github.com/hypengw/SPIRV-Reflect.git"
-branch = "toml"
+[workspace.dependencies]
+owe-core = { path = "src/Core" }
+owe-audio = { path = "src/Audio" }
+owe-types = { path = "src/Scene/types" }
+owe-utils = { path = "src/Scene/Utils" }
+owe-vulkan = { path = "src/Vulkan" }
+owe-scene = { path = "src/Scene" }
+owe-web = { path = "src/Web" }
+owe-viewer-common = { path = "viewer/Common" }
+owe-waywallen-producer = { path = "waywallen/Producer" }
+owe-waywallen-scene-renderer = { path = "waywallen/SceneRenderer" }
+owe-waywallen-web-renderer = { path = "waywallen/WebRenderer" }
+rstd-std = { version = "0.1.0" }
+rstd-cppstd = { version = "0.1.0" }
+rstd-json = { version = "0.1.0" }
+rstd-log = { version = "0.1.0" }
+rstd-argparse = { version = "0.1.0" }
+rstd-bench = { version = "0.1.0" }
+rstd-test = { version = "0.1.0" }
+wavsen = { git = "https://github.com/hypengw/wavsen.git" }
+vvk = { git = "https://github.com/litocpp/vvk.git" }
+spirv-reflect = { git = "https://github.com/hypengw/SPIRV-Reflect.git", branch = "toml" }
 
 [workspace.external-dependencies.pkg-config.glfw]
 module = "glfw3"
