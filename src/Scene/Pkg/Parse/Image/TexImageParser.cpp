@@ -592,26 +592,28 @@ auto TexImageParser::ParseHeader(ref<str> name) const -> Result<ImageHeader, Ima
 
             sf.frametime = file.ReadFloat();
             if (ver.sprite_frame_coords_int()) {
-                sf.x        = (float)file.ReadInt32() / spriteWidth;
-                sf.y        = (float)file.ReadInt32() / spriteHeight;
-                sf.xAxis[0] = (float)file.ReadInt32();
-                sf.xAxis[1] = (float)file.ReadInt32();
-                sf.yAxis[0] = (float)file.ReadInt32();
-                sf.yAxis[1] = (float)file.ReadInt32();
+                sf.x               = (float)file.ReadInt32() / spriteWidth;
+                sf.y               = (float)file.ReadInt32() / spriteHeight;
+                sf.xAxis[usize()]  = (float)file.ReadInt32();
+                sf.xAxis[usize(1)] = (float)file.ReadInt32();
+                sf.yAxis[usize()]  = (float)file.ReadInt32();
+                sf.yAxis[usize(1)] = (float)file.ReadInt32();
             } else {
-                sf.x        = file.ReadFloat() / spriteWidth;
-                sf.y        = file.ReadFloat() / spriteHeight;
-                sf.xAxis[0] = file.ReadFloat();
-                sf.xAxis[1] = file.ReadFloat();
-                sf.yAxis[0] = file.ReadFloat();
-                sf.yAxis[1] = file.ReadFloat();
+                sf.x               = file.ReadFloat() / spriteWidth;
+                sf.y               = file.ReadFloat() / spriteHeight;
+                sf.xAxis[usize()]  = file.ReadFloat();
+                sf.xAxis[usize(1)] = file.ReadFloat();
+                sf.yAxis[usize()]  = file.ReadFloat();
+                sf.yAxis[usize(1)] = file.ReadFloat();
             }
-            sf.width  = (float)std::sqrt(std::pow(sf.xAxis[0], 2) + std::pow(sf.xAxis[1], 2));
-            sf.height = (float)std::sqrt(std::pow(sf.yAxis[0], 2) + std::pow(sf.yAxis[1], 2));
-            sf.xAxis[0] /= spriteWidth;
-            sf.xAxis[1] /= spriteWidth;
-            sf.yAxis[0] /= spriteHeight;
-            sf.yAxis[1] /= spriteHeight;
+            sf.width =
+                (float)std::sqrt(std::pow(sf.xAxis[usize()], 2) + std::pow(sf.xAxis[usize(1)], 2));
+            sf.height =
+                (float)std::sqrt(std::pow(sf.yAxis[usize()], 2) + std::pow(sf.yAxis[usize(1)], 2));
+            sf.xAxis[usize()] /= spriteWidth;
+            sf.xAxis[usize(1)] /= spriteWidth;
+            sf.yAxis[usize()] /= spriteHeight;
+            sf.yAxis[usize(1)] /= spriteHeight;
             sf.rate = sf.height / sf.width;
             header.spriteAnim.AppendFrame(sf);
         }

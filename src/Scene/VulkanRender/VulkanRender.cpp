@@ -1133,6 +1133,9 @@ void VulkanRender::Impl::compileRenderGraph(Scene& scene, rg::RenderGraph& rg,
 bool VulkanRender::Impl::prepareProgram(Scene& scene, const RenderSceneSnapshot& render_scene,
                                         resource::ResourcePlanSections sections,
                                         SceneLoadBenchRecorderView     load_bench) {
+    // Prepared refresh replaces binding owners before recreating equivalent bindings.
+    [[maybe_unused]] auto audio_demand_reconciliation =
+        scene.AudioDemandMut()->BeginReconciliation();
     auto status = m_program.beginPrepare(
         scene, *m_device, m_rendering_resources, render_scene, sections, load_bench);
     while (status == RenderProgramPrepareStatus::BatchReady) {

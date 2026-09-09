@@ -633,6 +633,9 @@ void SceneRenderController::rebuildRenderGraph(vulkan::RenderGraphResourceRetent
                                                bool                                 evict_meshes,
                                                SceneLoadBenchRecorderView           load_bench) {
     if (! m_scene || ! renderInited()) return;
+    // Program replacement must not expose the gap between equivalent binding owners.
+    [[maybe_unused]] auto audio_demand_reconciliation =
+        m_scene->AudioDemandMut()->BeginReconciliation();
     if (m_rg.is_some()) m_render->clearLastRenderGraph(retention);
     if (evict_meshes) m_render->evictUnusedMeshes();
     m_render->configureRenderTargets(*m_scene);

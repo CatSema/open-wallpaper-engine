@@ -461,8 +461,8 @@ auto BuildMaterial(fs::VFS& vfs, ShaderCache& shader_cache,
                         };
                     }
                     materialShader.constValues[rstd::cppstd::to_string(G_RENDERVAR1)] =
-                        std::array { f1.xAxis[0],
-                                     f1.yAxis[1],
+                        std::array { f1.xAxis[usize()],
+                                     f1.yAxis[usize(1)],
                                      static_cast<float>(texh.spriteAnim.numFrames().to_primitive()),
                                      f1.rate };
                 }

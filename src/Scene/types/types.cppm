@@ -304,8 +304,8 @@ struct SpriteFrame {
     float        height { 1 };
     float        rate { 1 }; // real h / w
 
-    std::array<float, 2> xAxis { 1, 0 };
-    std::array<float, 2> yAxis { 0, 1 };
+    rstd::array<float, 2> xAxis { 1.0f, 0.0f };
+    rstd::array<float, 2> yAxis { 0.0f, 1.0f };
 };
 
 class SpriteAnimation {

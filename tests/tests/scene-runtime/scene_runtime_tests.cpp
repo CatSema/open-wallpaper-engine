@@ -430,6 +430,41 @@ TEST(AudioResponseDemand, AggregatesLeasesAndHonorsRuntimeGate) {
     EXPECT_EQ(changes, (std::vector<bool> { false, true, false, true, false, true, false }));
 }
 
+TEST(AudioResponseDemand, ReconcilesLeaseOwnerReplacementAtomically) {
+    owe::AudioResponseDemand demand;
+    std::vector<bool>        changes;
+    demand.SetCallback([&changes](bool active) {
+        changes.push_back(active);
+    });
+
+    auto lease = rstd::Some(demand.Acquire());
+    ASSERT_EQ(changes, (std::vector<bool> { false, true }));
+    {
+        auto reconciliation = demand.BeginReconciliation();
+        lease               = rstd::None();
+        lease               = rstd::Some(demand.Acquire());
+        EXPECT_TRUE(demand.Active());
+    }
+    EXPECT_EQ(changes, (std::vector<bool> { false, true }));
+
+    {
+        auto outer = demand.BeginReconciliation();
+        {
+            auto inner = demand.BeginReconciliation();
+            lease      = rstd::None();
+        }
+        EXPECT_FALSE(demand.Active());
+        EXPECT_EQ(changes, (std::vector<bool> { false, true }));
+    }
+    EXPECT_EQ(changes, (std::vector<bool> { false, true, false }));
+
+    {
+        auto reconciliation = demand.BeginReconciliation();
+        lease               = rstd::Some(demand.Acquire());
+    }
+    EXPECT_EQ(changes, (std::vector<bool> { false, true, false, true }));
+}
+
 TEST(SceneAudioAverage, SharesAtomicStateWithStreamOwner) {
     owe::Scene scene;
     auto       stream_owner = scene.AudioAverageHandle();

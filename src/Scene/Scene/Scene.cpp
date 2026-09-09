@@ -24,6 +24,9 @@ namespace owe
 struct AudioResponseDemand::State {
     struct Fields {
         usize            leases {};
+        usize            reconciliation_depth {};
+        bool             reconciliation_start_active { false };
+        bool             reconciliation_callback_changed { false };
         bool             enabled { true };
         Option<Callback> callback;
     };
@@ -58,7 +61,8 @@ void AudioResponseDemand::Update(State& state, i32 delta) {
         else if (fields->leases != usize())
             fields->leases -= usize((-delta).to_primitive());
         active = fields->enabled && fields->leases != usize();
-        if (active != before && fields->callback.is_some())
+        if (active != before && fields->reconciliation_depth == usize() &&
+            fields->callback.is_some())
             callback = Some((*fields->callback).clone());
     }
     if (callback.is_some()) (*callback)->operator()(active);
@@ -67,9 +71,64 @@ void AudioResponseDemand::Update(State& state, i32 delta) {
 AudioResponseDemand::AudioResponseDemand(): m_state(Arc<State>::make()) {}
 AudioResponseDemand::~AudioResponseDemand() = default;
 
+AudioResponseDemand::ReconciliationScope::ReconciliationScope(Arc<State> state)
+    : m_state(Some(rstd::move(state))) {
+    AudioResponseDemand::BeginReconciliation(**m_state);
+}
+
+AudioResponseDemand::ReconciliationScope::ReconciliationScope(ReconciliationScope&& other) noexcept
+    : m_state(other.m_state.take()) {}
+
+auto AudioResponseDemand::ReconciliationScope::operator=(ReconciliationScope&& other) noexcept
+    -> ReconciliationScope& {
+    if (this == &other) return *this;
+    Finish();
+    m_state = other.m_state.take();
+    return *this;
+}
+
+AudioResponseDemand::ReconciliationScope::~ReconciliationScope() { Finish(); }
+
+void AudioResponseDemand::ReconciliationScope::Finish() {
+    auto state = m_state.take();
+    if (state.is_some()) AudioResponseDemand::EndReconciliation(**state);
+}
+
+void AudioResponseDemand::BeginReconciliation(State& state) {
+    auto fields = state.fields.lock().unwrap_unchecked();
+    if (fields->reconciliation_depth == usize()) {
+        fields->reconciliation_start_active     = fields->enabled && fields->leases != usize();
+        fields->reconciliation_callback_changed = false;
+    }
+    fields->reconciliation_depth += usize(1);
+}
+
+void AudioResponseDemand::EndReconciliation(State& state) {
+    Option<Callback> callback;
+    bool             active = false;
+    {
+        auto fields = state.fields.lock().unwrap_unchecked();
+        rstd_assert(fields->reconciliation_depth != usize());
+        fields->reconciliation_depth -= usize(1);
+        if (fields->reconciliation_depth != usize()) return;
+        active = fields->enabled && fields->leases != usize();
+        if ((fields->reconciliation_callback_changed ||
+             active != fields->reconciliation_start_active) &&
+            fields->callback.is_some()) {
+            callback = Some((*fields->callback).clone());
+        }
+        fields->reconciliation_callback_changed = false;
+    }
+    if (callback.is_some()) (*callback)->operator()(active);
+}
+
 auto AudioResponseDemand::Acquire() -> Box<dyn<UniformBindingLease>> {
     Update(*m_state, i32(1));
     return Box<dyn<UniformBindingLease>>::make(Lease(m_state.downgrade()));
+}
+
+auto AudioResponseDemand::BeginReconciliation() -> ReconciliationScope {
+    return ReconciliationScope(m_state.clone());
 }
 
 void AudioResponseDemand::SetCallback(Option<Callback> callback) {
@@ -79,7 +138,11 @@ void AudioResponseDemand::SetCallback(Option<Callback> callback) {
         auto fields      = m_state->fields.lock().unwrap_unchecked();
         fields->callback = rstd::move(callback);
         active           = fields->enabled && fields->leases != usize();
-        if (fields->callback.is_some()) notify = Some((*fields->callback).clone());
+        if (fields->reconciliation_depth != usize()) {
+            fields->reconciliation_callback_changed = true;
+        } else if (fields->callback.is_some()) {
+            notify = Some((*fields->callback).clone());
+        }
     }
     if (notify.is_some()) (*notify)->operator()(active);
 }
@@ -92,7 +155,8 @@ void AudioResponseDemand::SetEnabled(bool enabled) {
         const bool before = fields->enabled && fields->leases != usize();
         fields->enabled   = enabled;
         active            = fields->enabled && fields->leases != usize();
-        if (active != before && fields->callback.is_some())
+        if (active != before && fields->reconciliation_depth == usize() &&
+            fields->callback.is_some())
             callback = Some((*fields->callback).clone());
     }
     if (callback.is_some()) (*callback)->operator()(active);
@@ -1937,7 +2001,10 @@ auto SceneTextureAnimationRegistry::Frame(SceneDrawItemId draw, usize texture_in
         frame = rstd::addressof((**animation).sprite.GetCurFrame());
     }
     return Some(SceneTextureFrameView {
-        .rotation    = { frame->xAxis[0], frame->xAxis[1], frame->yAxis[0], frame->yAxis[1] },
+        .rotation    = { frame->xAxis[usize()],
+                         frame->xAxis[usize(1)],
+                         frame->yAxis[usize()],
+                         frame->yAxis[usize(1)] },
         .translation = { frame->x, frame->y },
         .image_slot  = usize(static_cast<std::size_t>(frame->imageId)),
         .revision    = (**animation).revision,

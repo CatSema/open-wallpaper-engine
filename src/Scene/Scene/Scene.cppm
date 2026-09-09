@@ -2500,13 +2500,30 @@ struct SceneUserPropertyDiagnostic {
 };
 
 class AudioResponseDemand : NoCopy, NoMove {
+    struct State;
+
 public:
     using Callback = Arc<dyn<rstd::Fn<void(bool)>>>;
+
+    class ReconciliationScope : NoCopy {
+    public:
+        ReconciliationScope(ReconciliationScope&&) noexcept;
+        ReconciliationScope& operator=(ReconciliationScope&&) noexcept;
+        ~ReconciliationScope();
+
+    private:
+        friend class AudioResponseDemand;
+        explicit ReconciliationScope(Arc<State> state);
+        void Finish();
+
+        Option<Arc<State>> m_state;
+    };
 
     AudioResponseDemand();
     ~AudioResponseDemand();
 
     auto Acquire() -> Box<dyn<UniformBindingLease>>;
+    auto BeginReconciliation() -> ReconciliationScope;
     void SetCallback(Option<Callback> callback);
     template<typename F>
     void SetCallback(F callback) {
@@ -2516,8 +2533,9 @@ public:
     bool Active() const;
 
 private:
-    struct State;
     struct Lease;
+    static void BeginReconciliation(State& state);
+    static void EndReconciliation(State& state);
     static void Update(State& state, i32 delta);
     Arc<State>  m_state;
 };
