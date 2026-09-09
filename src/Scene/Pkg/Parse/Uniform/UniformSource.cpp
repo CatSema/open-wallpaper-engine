@@ -433,7 +433,7 @@ auto UniformSceneState::ComputeParallaxOffset(const UniformNodeState& state,
     const Vector2f pointer(Inputs().pointer.data());
     const Vector2f pointer_offset = Scaling(1.0f, -1.0f) * (Vector2f { 0.5f, 0.5f } - pointer);
     const Vector2f mouse = pointer_offset.cwiseProduct(ortho) * CameraParallax().mouse_influence;
-    const auto     camera_position = camera.GetPosition(view).cast<float>();
+    const Vector3f camera_position = camera.GetPosition(view).cast<float>();
     const Vector2f offset =
         (node_position.head<2>() - camera_position.head<2>() + mouse).cwiseProduct(depth) *
         CameraParallax().amount;
@@ -574,7 +574,7 @@ auto TransformUniformSource::Evaluate(ref<dyn<UniformUpdateContext>> context,
     if (m_node->eye_position_override.is_some()) {
         writer.Write(Output::EyePosition, *m_node->eye_position_override);
     } else if (m_node->use_camera_eye_position || camera.IsPerspective()) {
-        const auto position = camera.GetPosition(render_view).cast<float>();
+        const Vector3f position = camera.GetPosition(render_view).cast<float>();
         writer.Write(Output::EyePosition,
                      rstd::array<float, 3> { position.x(), position.y(), position.z() });
     }
@@ -911,7 +911,7 @@ auto ShadowUniformSource::Evaluate(ref<dyn<UniformUpdateContext>>,
     auto* light_node = m_light->node();
     if (light_node == nullptr) return writer.Finish();
     light_node->UpdateTrans();
-    const auto      light_frame = light_node->ModelTrans().block<3, 3>(0, 0);
+    const Matrix3d  light_frame = light_node->ModelTrans().block<3, 3>(0, 0);
     Eigen::Vector3d view_x      = light_frame.col(2);
     Eigen::Vector3d view_y      = light_frame.col(1);
     Eigen::Vector3d view_z      = light_frame.col(0);
