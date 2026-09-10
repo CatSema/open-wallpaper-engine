@@ -175,6 +175,12 @@ auto RenderGraph::textureState(TextureNodeRef ref) const -> rstd::Option<Texture
     });
 }
 
+auto RenderGraph::latestTexture(rstd::ref<rstd::str> key) const -> rstd::Option<TextureNodeRef> {
+    auto handle = m_key_texnode.get(key);
+    if (handle.is_none()) return rstd::None();
+    return rstd::Some(TextureNodeRef { .handle = **handle });
+}
+
 auto RenderGraph::readTexture(NodeHandle pass_node, TextureNodeRef texture) -> bool {
     if (getPassNode(pass_node).is_none() || textureState(texture).is_none()) return false;
 

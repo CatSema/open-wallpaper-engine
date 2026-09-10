@@ -1284,13 +1284,6 @@ globalThis.createScriptProperties = function () {
   builder.finish = function () {
     const _hostValues = builder._hostValues || {};
     const target = {};
-    const applyHostScale = (h, value) => {
-      if (h && typeof h === 'object' && typeof h.__scriptValueScale === 'number' &&
-          typeof value === 'number') {
-        return value * h.__scriptValueScale;
-      }
-      return value;
-    };
     const userValue = (u) => {
       if (typeof u === 'object' && u !== null && 'value' in u) return u.value;
       return u;
@@ -1311,9 +1304,9 @@ globalThis.createScriptProperties = function () {
       if (u !== undefined) {
         // project.json stores user props as { type, value, ... }; pluck
         // .value when present, else use the bare value directly.
-        return applyHostScale(h, userValue(u));
+        return userValue(u);
       }
-      return applyHostScale(h, h.value);
+      return h.value;
     };
     const coerceDescriptorValue = (descriptor, value) => {
       if (!descriptor || descriptor.kind !== 'Color') return value;

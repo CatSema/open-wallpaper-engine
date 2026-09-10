@@ -597,7 +597,7 @@ TEST(SceneRenderGraph, SharesOneLinkTargetForMultipleConsumers) {
     EXPECT_EQ(copy_count, rstd::usize());
 }
 
-TEST(SceneRenderGraph, ReadsPreviousThenCurrentLinkedSurfaceVersion) {
+TEST(SceneRenderGraph, ResolvesLinkedSurfaceFromProducerRegardlessOfSceneOrder) {
     owe::Scene scene;
     scene.SetOrtho({ rstd::i32(1920), rstd::i32(1080) });
     scene.RegisterRenderTarget(String::make("_rt_default"_str),
@@ -640,49 +640,45 @@ TEST(SceneRenderGraph, ReadsPreviousThenCurrentLinkedSurfaceVersion) {
 
     auto        plan = graph->resourcePlan();
     rstd::usize link_versions {};
-    bool        saw_previous {};
-    bool        saw_current {};
     for (const auto& entry : plan.textures) {
         if (entry.request.name != "_rt_link_7"_str) continue;
         ++link_versions;
-        if (entry.version == rstd::u32()) {
-            saw_previous = true;
-        }
-        if (entry.version == rstd::u32(1)) {
-            saw_current = true;
-        }
+        EXPECT_EQ(entry.version, rstd::u32());
         EXPECT_EQ(entry.request.lifetime, owe::resource::TextureLifetimeClass::Retained);
-        EXPECT_NE(entry.request.content & owe::resource::TextureContentFlag(
+        EXPECT_EQ(entry.request.content & owe::resource::TextureContentFlag(
                                               owe::resource::TextureContent::PreserveAcrossFrames),
                   rstd::u32());
         EXPECT_NE(entry.request.content & owe::resource::TextureContentFlag(
                                               owe::resource::TextureContent::InitializeTransparent),
                   rstd::u32());
     }
-    EXPECT_EQ(link_versions, rstd::usize(2));
-    EXPECT_TRUE(saw_previous);
-    EXPECT_TRUE(saw_current);
+    EXPECT_EQ(link_versions, rstd::usize(1));
 
-    bool before_reads_previous {};
+    bool source_emitted {};
+    bool before_reads_current {};
     bool after_reads_current {};
     auto ordered_passes = rstd::move(ordered).unwrap_unchecked();
     for (auto handle : ordered_passes) {
         auto state = graph->passState(handle);
         ASSERT_TRUE(state.is_some());
+        if (state->name == "source"_str) {
+            source_emitted = true;
+            continue;
+        }
         if (state->name != "before"_str && state->name != "after"_str) continue;
+        EXPECT_TRUE(source_emitted);
         auto pass = graph->getPass(state->pass);
         ASSERT_TRUE(pass.is_some());
         auto uses = static_cast<owe::vulkan::VulkanPass&>(*pass).resourceUses();
         for (auto use : uses.textures) {
             for (const auto& entry : plan.textures) {
                 if (entry.handle != use || entry.request.name != "_rt_link_7"_str) continue;
-                before_reads_previous |=
-                    state->name == "before"_str && entry.version == rstd::u32();
-                after_reads_current |= state->name == "after"_str && entry.version == rstd::u32(1);
+                before_reads_current |= state->name == "before"_str && entry.version == rstd::u32();
+                after_reads_current |= state->name == "after"_str && entry.version == rstd::u32();
             }
         }
     }
-    EXPECT_TRUE(before_reads_previous);
+    EXPECT_TRUE(before_reads_current);
     EXPECT_TRUE(after_reads_current);
 }
 

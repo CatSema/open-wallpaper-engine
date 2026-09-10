@@ -300,44 +300,6 @@ Option<Vector3f> ScriptValueAsVec3(const script::ScriptValue& value, const Vecto
     return Some(next);
 }
 
-bool IsFractionSliderProperty(const SceneParseContext& context, const Json& binding) {
-    if (context.user_properties.is_none() || ! binding.is_object()) return false;
-    auto user = binding.get("user"_str);
-    if (user.is_none()) return false;
-    auto key = (*user)->as_str();
-    if (key.is_none()) return false;
-    auto prop = (*context.user_properties)->get(*key);
-    if (prop.is_none() || ! (*prop)->is_object()) return false;
-    auto type = (*prop)->get("type"_str);
-    if (type.is_none()) return false;
-    auto type_string = (*type)->as_str();
-    if (type_string.is_none() || rstd::cppstd::as_string_view(*type_string) != "slider")
-        return false;
-    auto fraction = (*prop)->get("fraction"_str);
-    return fraction.is_some() && (*fraction)->as_bool().unwrap_or(false);
-}
-
-Json ScriptPropertiesForField(const SceneParseContext& context, std::string_view field,
-                              const Json& properties, const wpscene::ScriptBinding& binding) {
-    Json props = properties.clone();
-    if (field != "scale" || binding.source.find("/10000") == std::string::npos ||
-        ! props.is_object())
-        return props;
-
-    auto object = props.as_object_mut();
-    (*object)->iter_mut().for_each([&](auto entry) {
-        auto [entry_key, entry_value] = entry;
-        auto& item                    = *entry_value;
-        if (IsFractionSliderProperty(context, item)) {
-            auto item_object = item.as_object_mut();
-            (*item_object)
-                ->insert(::alloc::string::String::make("__scriptValueScale"_str),
-                         rstd::into<Json>(f64(50.0)));
-        }
-    });
-    return props;
-}
-
 Json ScriptInitialValueForField(std::string_view field, const Json& value) {
     if (field != "angles") return value.clone();
 
@@ -446,16 +408,15 @@ void WireFieldScripts(SceneParseContext& context, const Arc<SceneNode>& node_sp,
             // text/rate/intensity/... are wired elsewhere or not yet supported.
             continue;
         }
-        std::string sha = utils::genSha1(std::span<const char>(sb.source));
-        auto props      = ScriptPropertiesForField(context, field, binding.ScriptProperties(), sb);
-        auto initial_value = ScriptInitialValueForField(field, sb.initial_value);
+        std::string sha           = utils::genSha1(std::span<const char>(sb.source));
+        auto        initial_value = ScriptInitialValueForField(field, sb.initial_value);
         Option<Arc<SceneAnimationPlayback>> animation;
         if (binding.animation.is_some())
             animation = Some(ResolveAnimationTrack(context, binding).playback.clone());
         auto* fs = rt.MakeFieldScript(sb.source,
                                       sha,
                                       kind,
-                                      props,
+                                      binding.ScriptProperties(),
                                       initial_value,
                                       script::ScriptBindingContext::ForLayer(
                                           node, binding.field.as_str(), rstd::move(animation)));

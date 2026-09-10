@@ -85,6 +85,7 @@ public:
     auto getPass(PassHandle) const -> rstd::Option<const Pass&>;
     auto passState(NodeHandle) const -> rstd::Option<PassNodeState>;
     auto textureState(TextureNodeRef) const -> rstd::Option<TextureNodeState>;
+    auto latestTexture(rstd::ref<rstd::str> key) const -> rstd::Option<TextureNodeRef>;
     auto readTexture(NodeHandle pass_node, TextureNodeRef texture) -> bool;
 
     auto topologicalOrder() const

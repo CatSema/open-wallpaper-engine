@@ -527,6 +527,54 @@ TEST(SceneParserSoundScript, UserPropertyCanStartSilentSoundFromVolumeField) {
     EXPECT_FLOAT_EQ(controller->Volume(), 0.35f);
 }
 
+TEST(SceneParserScript, FractionSliderPreservesAuthoredValue) {
+    auto document = owe::wpscene::ParseSceneDocumentJson(
+        R"JSON({
+            "camera": {},
+            "general": {},
+            "objects": [{
+                "id": 1,
+                "name": "Clock Group",
+                "scale": {
+                    "script": "export var scriptProperties = createScriptProperties().addSlider({name: 'clock_size', value: 0.4, min: 0, max: 1}).finish(); export function update(value) { value.x = scriptProperties.clock_size / 10000; value.y = scriptProperties.clock_size / 10000; return value; }",
+                    "scriptproperties": {
+                        "clock_size": {"user": "clocksize", "value": 0.4}
+                    },
+                    "value": "0.00004 0.00004 0.00004"
+                }
+            }]
+        })JSON",
+        owe::wpscene::kSceneVersionUnknown);
+    ASSERT_TRUE(document.is_some());
+
+    auto user_properties = rstd::json::Map::make();
+    user_properties.insert(
+        String::make("clocksize"_str),
+        owe::ParseJson(R"({"type":"slider","fraction":true,"value":0.4})").unwrap());
+
+    owe::fs::VFS                vfs;
+    wavsen::audio::SoundManager sound_manager;
+    owe::SceneParser            parser;
+    auto                        parsed = parser.Parse(
+        "fraction-slider-scale"_str,
+        ref<owe::wpscene::SceneDocument>::from_raw_parts(rstd::addressof(*document)),
+        mut_ref<owe::fs::VFS>::from_raw_parts(rstd::addressof(vfs)),
+        mut_ref<wavsen::audio::SoundManager>::from_raw_parts(rstd::addressof(sound_manager)),
+        owe::SceneParseOptions {
+            .user_properties =
+                Some(ref<rstd::json::Map>::from_raw_parts(rstd::addressof(user_properties))),
+        });
+    ASSERT_TRUE(parsed.is_ok());
+
+    auto scene = rstd::move(parsed).unwrap();
+    auto group = scene.scene->RootMut()->FindByName("Clock Group");
+    ASSERT_NE(group, nullptr);
+
+    owe::script::TickSceneScripts(*scene.scene, owe::script::FrameInputs {});
+    EXPECT_FLOAT_EQ(group->Scale().x(), 0.00004f);
+    EXPECT_FLOAT_EQ(group->Scale().y(), 0.00004f);
+}
+
 TEST(SceneParserScript, DynamicObjectsUseSceneIdentity) {
     auto document = owe::wpscene::ParseSceneDocumentJson(
         R"JSON({

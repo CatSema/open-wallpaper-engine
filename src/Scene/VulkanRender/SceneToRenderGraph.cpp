@@ -63,6 +63,13 @@ void doCopy(RenderGraphBuilder& builder, vulkan::CopyPass::Desc& desc, TextureNo
 
 struct ExtraInfo;
 
+struct DeferredTextureBinding {
+    rg::NodeHandle node;
+    rg::PassHandle pass;
+    String         key;
+    u32            texture_index;
+};
+
 static rg::TextureDesc MakeTextureDescBase(std::string_view key) {
     auto name = as_str(key).unwrap();
     return rg::TextureDesc {
@@ -73,12 +80,13 @@ static rg::TextureDesc MakeTextureDescBase(std::string_view key) {
 }
 
 struct ExtraInfo {
-    rg::RenderGraph*           rgraph { nullptr };
-    Scene*                     scene { nullptr };
-    Set<std::string>           depth_initialized_outputs {};
-    HashSet<String>            transient_texture_families;
-    Option<rg::TextureNodeRef> mip_framebuffer_history;
-    const RenderSceneSnapshot* render_scene { nullptr };
+    rg::RenderGraph*            rgraph { nullptr };
+    Scene*                      scene { nullptr };
+    Set<std::string>            depth_initialized_outputs {};
+    HashSet<String>             transient_texture_families;
+    Option<rg::TextureNodeRef>  mip_framebuffer_history;
+    const RenderSceneSnapshot*  render_scene { nullptr };
+    Vec<DeferredTextureBinding> deferred_texture_bindings;
 };
 
 static Option<vulkan::TextureRequest> BuildGraphTextureRequest(ExtraInfo&       extra,
@@ -201,6 +209,41 @@ static void StoreMipFramebufferHistory(ExtraInfo& extra) {
         extra, MakeTextureDesc(extra, as_string_view(SpecTex_Default)), rstd::move(history_desc));
 }
 
+static void ResolveDeferredTextureBindings(ExtraInfo& extra) {
+    for (auto& deferred : extra.deferred_texture_bindings) {
+        auto input = extra.rgraph->latestTexture(deferred.key.as_str());
+        if (input.is_none()) {
+            rstd_error("deferred texture '{}' has no producer", deferred.key);
+            continue;
+        }
+        auto state = extra.rgraph->textureState(*input);
+        if (state.is_none()) {
+            rstd_error("deferred texture '{}' state not found", deferred.key);
+            continue;
+        }
+        auto graph_pass = extra.rgraph->getPass(deferred.pass);
+        if (graph_pass.is_none()) {
+            rstd_error("deferred texture '{}' consumer pass not found", deferred.key);
+            continue;
+        }
+        if (! extra.rgraph->readTexture(deferred.node, *input)) {
+            rstd_error("deferred texture '{}' read failed", deferred.key);
+            continue;
+        }
+        auto& pass = static_cast<vulkan::VulkanPass&>(*graph_pass);
+        if (! pass.setTextureBinding(deferred.texture_index,
+                                     vulkan::TextureBindingRequest {
+                                         .name    = state->desc.key.clone(),
+                                         .use     = Some(state->use),
+                                         .request = state->desc.request.is_some()
+                                                        ? Some(state->desc.request->clone())
+                                                        : None<resource::TextureRequest>(),
+                                     })) {
+            rstd_error("deferred texture '{}' binding failed", deferred.key);
+        }
+    }
+}
+
 static void AddMaterialTextureReads(SceneMaterial& material, std::string_view pass_output,
                                     ExtraInfo& extra, rg::RenderGraphBuilder& builder,
                                     vulkan::CustomShaderPass::Desc& pdesc,
@@ -240,9 +283,16 @@ static void AddMaterialTextureReads(SceneMaterial& material, std::string_view pa
                 pdesc.texture_bindings.emplace_back();
                 continue;
             }
-            binding_key = StdString(link->render_target_key);
-            input       = Some(builder.createTexture(MakeTextureDesc(extra, binding_key)));
-            builder.markVirtualWrite(*input);
+            binding_key      = StdString(link->render_target_key);
+            const auto& pass = builder.workPassNode();
+            extra.deferred_texture_bindings.push(DeferredTextureBinding {
+                .node          = pass.handle,
+                .pass          = pass.pass,
+                .key           = link->render_target_key.clone(),
+                .texture_index = u32(rstd::as_cast<rstd::uint32_t>(index)),
+            });
+            pdesc.texture_bindings.emplace_back();
+            continue;
         } else {
             binding_key = StdString(source.key);
             auto name   = as_str(binding_key).unwrap();
@@ -751,6 +801,7 @@ Box<rg::RenderGraph> owe::sceneToRenderGraph(Scene&                     scene,
         }
     }
 
+    ResolveDeferredTextureBindings(extra);
     StoreMipFramebufferHistory(extra);
 
     scene.RebuildResourceIndex();
