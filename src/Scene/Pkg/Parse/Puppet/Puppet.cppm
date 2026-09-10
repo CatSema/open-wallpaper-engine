@@ -139,8 +139,15 @@ public:
         Vec<AnimV4Curve> curves;
     };
 
-    // Trailing event list — present on every animation regardless of mdla
-    // version. `event_json` is the WE editor's keyframe payload.
+    struct AnimSourceClip {
+        rstd::uint16_t source_animation_index { 0 };
+        rstd::uint32_t start_frame { 0 };
+        rstd::uint32_t end_frame { 0 };
+        rstd::uint32_t frame_offset { 0 };
+        rstd::int32_t  motion_root_bone { -1 };
+    };
+
+    // Trailing event list. `event_json` is the WE editor's keyframe payload.
     struct AnimEvent {
         uint32_t time_value;
         String   event_json;
@@ -149,6 +156,7 @@ public:
     struct Animation {
         rstd::int32_t  id;
         rstd::uint32_t unk_after_id { 0 };
+        rstd::uint32_t flags { 0 };
         double         fps;
         rstd::int32_t  length;
         PlayMode       mode;
@@ -168,6 +176,8 @@ public:
         bool            has_aabb { false };
         // mdla==6 per-bone scalar curves (same shape as blend_curves).
         Vec<BoneFrameCurve> scalar_curves;
+        // Source animation and frame range for editor-created clips.
+        Option<AnimSourceClip> source_clip;
         // Trailing event list (all mdla versions).
         Vec<AnimEvent> events;
 

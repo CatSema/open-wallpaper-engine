@@ -33,6 +33,21 @@ String ReadOwnedString(fs::BinaryReader& reader) {
     return String::make(rstd::cppstd::as_str(value).unwrap());
 }
 
+Option<String> ReadOwnedStringBefore(fs::BinaryReader& reader, rstd::ptrdiff_t end_offset,
+                                     usize max_size) {
+    Vec<u8> bytes;
+    while (reader.Tell() < end_offset && bytes.len() < max_size) {
+        auto value = u8(reader.ReadUint8());
+        if (value == u8()) {
+            auto string = String::from_utf8(rstd::move(bytes));
+            if (string.is_err()) return None();
+            return Some(rstd::move(string).unwrap_unchecked());
+        }
+        bytes.push(rstd::move(value));
+    }
+    return None();
+}
+
 template<typename T>
 void ResetDefault(Vec<T>& values, usize length) {
     values.clear();
@@ -53,6 +68,7 @@ constexpr uint32_t singile_indices_u16          = 2 * 3;
 constexpr uint32_t singile_indices_u32          = 4 * 3;
 constexpr uint32_t singile_bone_frame           = 4 * 9;
 constexpr uint32_t mdls_offset_trans_entry_size = (3 + 16) * 4;
+constexpr uint32_t MDLA_ANIM_FLAG_SOURCE_CLIP   = 0x1;
 
 // Compute per-vertex byte stride from a layout flag bitset. Position is
 // always emitted (12 bytes), other attributes are gated by their bits.
@@ -142,6 +158,100 @@ bool next_is_anim_record_padding(fs::BinaryReader& f, uint32_t end_offset) {
     }
     uint32_t next_unk_after_id = 0;
     return peek_uint32_at(f, off + 8, next_unk_after_id) && next_unk_after_id == 0;
+}
+
+bool is_animation_header_at(fs::BinaryReader& f, rstd::ptrdiff_t off, uint32_t end_offset) {
+    auto end = static_cast<rstd::ptrdiff_t>(end_offset);
+    if (off < 0 || off + 24 > end) return false;
+
+    auto save = f.Tell();
+    f.SeekSet(off);
+
+    auto id           = f.ReadInt32();
+    auto unk_after_id = f.ReadUint32();
+    if (id <= 0 || id > 100000 || unk_after_id != 0) {
+        f.SeekSet(save);
+        return false;
+    }
+
+    auto name = ReadOwnedStringBefore(f, end, usize(1024));
+    if (name.is_some() && name->is_empty()) {
+        name = ReadOwnedStringBefore(f, end, usize(1024));
+    }
+    auto mode = ReadOwnedStringBefore(f, end, usize(16));
+    if (name.is_none() || name->is_empty() || mode.is_none()) {
+        f.SeekSet(save);
+        return false;
+    }
+    if (! mode->is_empty() && *mode != "loop"_str && *mode != "mirror"_str &&
+        *mode != "single"_str) {
+        f.SeekSet(save);
+        return false;
+    }
+    if (f.Tell() + 16 > end) {
+        f.SeekSet(save);
+        return false;
+    }
+
+    auto fps    = f.ReadFloat();
+    auto length = f.ReadInt32();
+    f.ReadInt32();
+    auto bone_count = f.ReadUint32();
+    auto valid = fps > 0.0f && fps <= 1000.0f && length >= 0 && length <= 1000000 &&
+                 static_cast<uint64_t>(bone_count) * 8 <= static_cast<uint64_t>(end - f.Tell());
+    f.SeekSet(save);
+    return valid;
+}
+
+bool is_animation_tail_boundary(fs::BinaryReader& f, bool has_next_animation, uint32_t end_offset) {
+    auto off = f.Tell();
+    if (has_next_animation) {
+        if (is_animation_header_at(f, off, end_offset)) return true;
+        uint32_t padding = 0;
+        return peek_uint32_at(f, off, padding) && padding == 0 &&
+               is_animation_header_at(f, off + 4, end_offset);
+    }
+
+    auto end = static_cast<rstd::ptrdiff_t>(end_offset);
+    if (off == end) return true;
+    uint32_t padding = 0;
+    return off + 4 == end && peek_uint32_at(f, off, padding) && padding == 0;
+}
+
+bool ParseAnimEvents(fs::BinaryReader& f, Vec<Puppet::AnimEvent>& out, bool has_next_animation,
+                     uint32_t end_offset) {
+    auto end = static_cast<rstd::ptrdiff_t>(end_offset);
+    if (f.Tell() + 4 > end) return false;
+
+    uint32_t event_count = f.ReadUint32();
+    auto     remaining   = end - f.Tell();
+    if (static_cast<uint64_t>(event_count) > static_cast<uint64_t>(remaining / 5)) return false;
+
+    Vec<Puppet::AnimEvent> events;
+    ResetDefault(events, usize(event_count));
+    for (auto& event : events) {
+        if (f.Tell() + 5 > end) return false;
+        event.time_value = f.ReadUint32();
+        auto json        = ReadOwnedStringBefore(f, end, usize(end - f.Tell()));
+        if (json.is_none()) return false;
+        event.event_json = rstd::move(*json);
+    }
+    if (! is_animation_tail_boundary(f, has_next_animation, end_offset)) return false;
+
+    out = rstd::move(events);
+    return true;
+}
+
+bool ParseAnimSourceClip(fs::BinaryReader& f, Puppet::AnimSourceClip& clip, uint32_t end_offset) {
+    auto end = static_cast<rstd::ptrdiff_t>(end_offset);
+    if (f.Tell() + 18 > end) return false;
+
+    clip.source_animation_index = f.ReadUint16();
+    clip.start_frame            = f.ReadUint32();
+    clip.end_frame              = f.ReadUint32();
+    clip.frame_offset           = f.ReadUint32();
+    clip.motion_root_bone       = f.ReadInt32();
+    return clip.end_frame >= clip.start_frame;
 }
 
 rstd::ptrdiff_t mdls_v2_indexed_trailer_start(uint32_t end_offset, uint16_t bones_num) {
@@ -563,7 +673,7 @@ bool ParseAnimTransMainTrack(fs::BinaryReader& f, Vec<float>& out, int32_t lengt
 }
 
 bool ParseAnimation(fs::BinaryReader& f, Puppet::Animation& anim, int mdla_ver,
-                    uint32_t mdla_end_offset, std::string_view path) {
+                    uint32_t mdla_end_offset, bool has_next_animation, std::string_view path) {
     anim.id           = f.ReadInt32();
     anim.unk_after_id = f.ReadUint32();
 
@@ -574,7 +684,7 @@ bool ParseAnimation(fs::BinaryReader& f, Puppet::Animation& anim, int mdla_ver,
     anim.mode      = ToPlayMode(rstd::cppstd::as_str(play_mode).unwrap());
     anim.fps       = f.ReadFloat();
     anim.length    = f.ReadInt32();
-    f.ReadInt32(); // anim_zero
+    anim.flags     = f.ReadUint32();
 
     uint32_t b_num = f.ReadUint32();
     ResetDefault(anim.bone_tracks, usize(b_num));
@@ -692,13 +802,24 @@ bool ParseAnimation(fs::BinaryReader& f, Puppet::Animation& anim, int mdla_ver,
         }
     }
 
-    // Trailing event list — present on every animation regardless of mdla
-    // version. Pre-mdla>=3 anims start here directly.
-    uint32_t event_count = f.ReadUint32();
-    ResetDefault(anim.events, usize(event_count));
-    for (auto& ev : anim.events) {
-        ev.time_value = f.ReadUint32();
-        ev.event_json = ReadOwnedString(f);
+    if ((anim.flags & MDLA_ANIM_FLAG_SOURCE_CLIP) != 0) {
+        auto& clip = anim.source_clip.insert(Puppet::AnimSourceClip {});
+        if (! ParseAnimSourceClip(f, clip, mdla_end_offset)) {
+            rstd_error(
+                "Animation {} has an invalid source clip in {}", anim.name, std::string(path));
+            return false;
+        }
+    }
+
+    auto events_offset = f.Tell();
+    if (! ParseAnimEvents(f, anim.events, has_next_animation, mdla_end_offset)) {
+        anim.events.clear();
+        f.SeekSet(events_offset);
+        rstd_error("Animation {} has an invalid event list at 0x{:X} in {}",
+                   anim.name,
+                   static_cast<uint32_t>(events_offset),
+                   std::string(path));
+        return false;
     }
     if (next_is_anim_record_padding(f, mdla_end_offset)) {
         uint32_t record_padding_zero = f.ReadUint32();
@@ -720,12 +841,15 @@ bool ParseMDLA(fs::BinaryReader& f, Mdl& mdl, std::string_view tag, std::string_
     uint32_t anim_num = f.ReadUint32();
     auto&    anims    = (*mdl.puppet)->anims;
     ResetDefault(anims, usize(anim_num));
-    bool ok = true;
+    bool  ok = true;
+    usize animation_index {};
     for (auto& anim : anims) {
-        if (! ParseAnimation(f, anim, mdl.mdla, end_offset, path)) {
+        auto has_next_animation = animation_index + usize(1) < anims.len();
+        if (! ParseAnimation(f, anim, mdl.mdla, end_offset, has_next_animation, path)) {
             ok = false;
             break;
         }
+        ++animation_index;
     }
 
     if (end_offset > 0 && static_cast<uint32_t>(f.Tell()) + 4 == end_offset) {
