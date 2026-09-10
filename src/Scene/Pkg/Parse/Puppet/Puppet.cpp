@@ -253,21 +253,22 @@ slice<Eigen::Affine3f> Puppet::genFrame(PuppetLayer& puppet_layer, double time) 
             double blend = LayerBoneBlend(*layer.anim, i, info, alayer.blend);
             if (blend <= 0.0) continue;
 
-            auto frame_a_quat_delta = frame_a.quaternion * frame_base.quaternion.conjugate();
-            auto frame_b_quat_delta = frame_b.quaternion * frame_base.quaternion.conjugate();
-            auto pos_a_delta        = frame_a.position - frame_base.position;
-            auto pos_b_delta        = frame_b.position - frame_base.position;
-            auto scale_a_delta      = frame_a.scale - frame_base.scale;
-            auto scale_b_delta      = frame_b.scale - frame_base.scale;
+            const auto reference_position =
+                alayer.additive ? bone.local_bind.translation() : frame_base.position;
+            const auto reference_rotation =
+                alayer.additive ? bind_linear.rotation : frame_base.quaternion;
+            const auto reference_scale = alayer.additive ? bind_linear.scale : frame_base.scale;
+
+            auto frame_a_quat_delta = frame_a.quaternion * reference_rotation.conjugate();
+            auto frame_b_quat_delta = frame_b.quaternion * reference_rotation.conjugate();
+            auto pos_a_delta        = frame_a.position - reference_position;
+            auto pos_b_delta        = frame_b.position - reference_position;
+            auto scale_a_delta      = frame_a.scale - reference_scale;
+            auto scale_b_delta      = frame_b.scale - reference_scale;
 
             quat *= frame_a_quat_delta.slerp(t, frame_b_quat_delta).slerp(1.0 - blend, ident);
-            if (alayer.additive) {
-                trans += blend * (pos_a_delta * one_t + pos_b_delta * t);
-                scale += blend * (scale_a_delta * one_t + scale_b_delta * t);
-            } else {
-                trans += blend * (pos_a_delta * one_t + pos_b_delta * t);
-                scale += blend * (scale_a_delta * one_t + scale_b_delta * t);
-            }
+            trans += blend * (pos_a_delta * one_t + pos_b_delta * t);
+            scale += blend * (scale_a_delta * one_t + scale_b_delta * t);
         }
         if (bone.noBindParent() && world_anchored_bones) {
             trans += bone.vertex_centroid_offset;
