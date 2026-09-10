@@ -223,6 +223,8 @@ float4 mod(float4 a, float  b) { return a - b * floor(a / b); }
 // v_TexCoord is vec4).
 #define texSample2D(t, uv)         ((t).Sample(t##_ww_sampler, (uv)))
 #define texSample2DLod(t, uv, lod) ((t).SampleLevel(t##_ww_sampler, (uv), (lod)))
+#define DECLARE_SAMPLER2D_PARAMETER(t) Texture2D<float4> t, SamplerState t##_ww_sampler
+#define MAKE_SAMPLER2D_ARGUMENT(t)     t, t##_ww_sampler
 // SampleCmpLevelZero handles the depth-compare semantics that `sampler2DComparison`
 // implies in GLSL; the paired sampler is a SamplerComparisonState (see
 // HLSLSamplerStateType in ShaderParser.cpp). uv.xy is the atlas coord,

@@ -391,6 +391,7 @@ struct ParticleAnimationSpec {
 struct ParticlePlaybackState {
     rstd::sync::atomic::Atomic<bool> playing { true };
     rstd::sync::atomic::Atomic<u32>  reset_sequence {};
+    rstd::sync::atomic::Atomic<u32>  pending_emit_count {};
 };
 
 class ParticleSubSystem;
@@ -524,6 +525,7 @@ public:
     auto RopeSequenceCount() const noexcept -> Option<u32> { return m_rope_sequence_count; }
     void SetRopeSequenceCount(u32 value) noexcept { m_rope_sequence_count = Some(value); }
     auto AnimationSpec() const noexcept -> ParticleAnimationSpec { return m_animation_spec; }
+    auto TakePendingEmitCount() noexcept -> u32;
     auto RenderPosition(usize instance_index, const Eigen::Vector3f& position) const
         -> Eigen::Vector3f;
     auto Mesh() noexcept -> SceneMesh& { return *m_mesh; }

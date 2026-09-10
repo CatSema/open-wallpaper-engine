@@ -427,6 +427,12 @@ auto ParticleSubSystem::System() noexcept -> particle::ParticleSystem& {
     return *m_system->get();
 }
 
+auto ParticleSubSystem::TakePendingEmitCount() noexcept -> u32 {
+    if (m_playback_state.is_none()) return u32();
+    return (*m_playback_state)
+        ->pending_emit_count.exchange(u32(), rstd::sync::atomic::Ordering::AcqRel);
+}
+
 auto ParticleSubSystem::QueryNewInstance() -> Option<ParticleInstanceRef> {
     if (Random::get(0.0, 1.0) > m_probability.to_primitive()) return None();
 

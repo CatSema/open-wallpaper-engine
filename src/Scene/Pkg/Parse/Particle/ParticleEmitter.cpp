@@ -150,19 +150,23 @@ void BoxEmitterProgram::Emit(particle::ParticleEmitterContext& context) {
     auto frame = ParticleFrameFrom(context.Frame());
     if (! InstanceCanEmit(frame)) return;
 
+    auto pending_count = m_index == usize() ? frame->subsystem->TakePendingEmitCount() : u32();
+
     auto& emitter = frame->subsystem->InstanceStateMut(frame->instance_index).Emitter(m_index);
     emitter.elapsed += frame->emitter_delta;
-    if (m_args.duration > 0.0f && emitter.elapsed > f64(m_args.duration)) return;
+    if (m_args.duration > 0.0f && emitter.elapsed > f64(m_args.duration) && pending_count == u32())
+        return;
     emitter.timer += frame->emitter_delta;
 
     auto  controlpoints = frame->subsystem->Controlpoints();
     auto  origin        = ResolveEmitterOrigin(controlpoints, m_args.controlpoint, m_args.origin);
     float emit_speed = m_args.emit_speed *
                        AudioResponseScale(frame->audio_average.as_slice(), m_args.audio_response);
-    auto  emit_count = ResolveEmitCount(
+    auto  timed_emit_count = ResolveEmitCount(
         emitter.timer, emit_speed, m_args.instantaneous, m_args.one_per_frame, context.Empty());
-    auto requests = context.Acquire(rstd::as_cast<usize>(emit_count), EmitDuration(emit_speed));
-    auto columns  = m_pipeline->Bind(context.View());
+    auto emit_count = timed_emit_count.saturating_add(pending_count);
+    auto requests   = context.Acquire(rstd::as_cast<usize>(emit_count), EmitDuration(emit_speed));
+    auto columns    = m_pipeline->Bind(context.View());
     for (auto request : requests) {
         Eigen::Vector3d position;
         for (usize component {}; component < usize(3); ++component) {
@@ -184,8 +188,10 @@ void BoxEmitterProgram::Emit(particle::ParticleEmitterContext& context) {
         }
         m_pipeline->Initialize(columns, request, context.Frame());
     }
-    auto emitted = rstd::as_cast<u32>(requests.len());
-    CommitEmitCount(emitter.timer, emit_speed, emit_count, emitted, m_args.one_per_frame);
+    auto emitted       = rstd::as_cast<u32>(requests.len());
+    auto timed_emitted = emitted.saturating_sub(pending_count);
+    CommitEmitCount(
+        emitter.timer, emit_speed, timed_emit_count, timed_emitted, m_args.one_per_frame);
 }
 
 void SphereEmitterProgram::Compile(particle::ParticleViewCompiler& compiler) {
@@ -196,9 +202,12 @@ void SphereEmitterProgram::Emit(particle::ParticleEmitterContext& context) {
     auto frame = ParticleFrameFrom(context.Frame());
     if (! InstanceCanEmit(frame)) return;
 
+    auto pending_count = m_index == usize() ? frame->subsystem->TakePendingEmitCount() : u32();
+
     auto& emitter = frame->subsystem->InstanceStateMut(frame->instance_index).Emitter(m_index);
     emitter.elapsed += frame->emitter_delta;
-    if (m_args.duration > 0.0f && emitter.elapsed > f64(m_args.duration)) return;
+    if (m_args.duration > 0.0f && emitter.elapsed > f64(m_args.duration) && pending_count == u32())
+        return;
     emitter.timer += frame->emitter_delta;
 
     auto controlpoints = frame->subsystem->Controlpoints();
@@ -207,10 +216,11 @@ void SphereEmitterProgram::Emit(particle::ParticleEmitterContext& context) {
     auto            dimensions = ActiveAxisCount(directions);
     float emit_speed = m_args.emit_speed *
                        AudioResponseScale(frame->audio_average.as_slice(), m_args.audio_response);
-    auto  emit_count = ResolveEmitCount(
+    auto  timed_emit_count = ResolveEmitCount(
         emitter.timer, emit_speed, m_args.instantaneous, m_args.one_per_frame, context.Empty());
-    auto requests = context.Acquire(rstd::as_cast<usize>(emit_count), EmitDuration(emit_speed));
-    auto columns  = m_pipeline->Bind(context.View());
+    auto emit_count = timed_emit_count.saturating_add(pending_count);
+    auto requests   = context.Acquire(rstd::as_cast<usize>(emit_count), EmitDuration(emit_speed));
+    auto columns    = m_pipeline->Bind(context.View());
     for (auto request : requests) {
         double          radius = RandomRadius(m_args.min_distance, m_args.max_distance, dimensions);
         Eigen::Vector3d unit   = RandomDirectedUnit(directions);
@@ -229,6 +239,8 @@ void SphereEmitterProgram::Emit(particle::ParticleEmitterContext& context) {
         }
         m_pipeline->Initialize(columns, request, context.Frame());
     }
-    auto emitted = rstd::as_cast<u32>(requests.len());
-    CommitEmitCount(emitter.timer, emit_speed, emit_count, emitted, m_args.one_per_frame);
+    auto emitted       = rstd::as_cast<u32>(requests.len());
+    auto timed_emitted = emitted.saturating_sub(pending_count);
+    CommitEmitCount(
+        emitter.timer, emit_speed, timed_emit_count, timed_emitted, m_args.one_per_frame);
 }

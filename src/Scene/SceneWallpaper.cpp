@@ -547,8 +547,8 @@ void SceneRenderController::onDraw() {
         // The runtime is a no-op when no ScriptScene is installed.
         {
             owe::script::FrameInputs fi;
-            fi.frametime   = static_cast<float>(m_scene->Runtime().Frame().delta.to_primitive() *
-                                                m_speed.to_primitive());
+            fi.frametime =
+                static_cast<float>(frame_timer.TargetFrameTime() * m_speed.to_primitive());
             fi.runtime     = static_cast<float>(m_scene->Runtime().Frame().elapsed.to_primitive());
             fi.time_of_day = LocalTimeOfDay();
             auto ortho     = m_scene->Ortho();

@@ -2278,6 +2278,19 @@ JSValue NodeGetParticleInstance(JSContext* ctx, JSValueConst this_val) {
     if (! node || node->ParticleControl().is_none()) return JS_UNDEFINED;
     return WrapParticleInstance(ctx, node);
 }
+JSValue NodeEmitParticles(JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
+    auto* node = GetLayerNode(this_val);
+    if (! node) return JS_UNDEFINED;
+    auto control = node->ParticleControl();
+    if (control.is_none()) return JS_UNDEFINED;
+    int64_t count {};
+    if (argc < 1 || JS_ToInt64(ctx, &count, argv[0]) != 0 || count <= 0) return JS_UNDEFINED;
+    auto emit_count = count > static_cast<int64_t>(u32::MAX.to_primitive())
+                          ? u32::MAX
+                          : u32(static_cast<rstd::uint32_t>(count));
+    (**control).Emit(emit_count);
+    return JS_UNDEFINED;
+}
 JSValue NodeGetPerspective(JSContext* ctx, JSValueConst this_val) {
     auto* n = GetLayerNode(this_val);
     return JS_NewBool(ctx, n ? n->Perspective() : false);
@@ -3244,6 +3257,7 @@ const JSCFunctionListEntry s_layer_proto_funcs[] = {
     JS_CFUNC_DEF("getBoneTransform", 1, NodeGetBoneTransform),
     JS_CFUNC_DEF("getTextureAnimation", 0, NodeGetTextureAnimation),
     JS_CFUNC_DEF("getVideoTexture", 0, NodeGetVideoTexture),
+    JS_CFUNC_DEF("emitParticles", 1, NodeEmitParticles),
     JS_CFUNC_DEF("getAnimation", 1, NodeGetAnimation),
     JS_CFUNC_DEF("getAnimationLayer", 1, NodeGetAnimation),
     JS_CFUNC_DEF("createLayer", 1, NodeSceneCreateLayer),

@@ -557,10 +557,24 @@ bool IsLayerCompositeShader(std::string_view shader) {
 std::string ResolveShaderMaterialKey(const ShaderInfo& info, std::string_view material_key) {
     if (auto it = info.alias.find(material_key); it != info.alias.end()) return it->second;
 
+    auto folded_key = String::make(as_str(material_key).unwrap());
+    folded_key->make_ascii_lowercase();
+    std::string resolved;
     for (const auto& el : info.alias) {
-        if (el.second.size() > 2 && el.second.substr(2) == material_key) return el.second;
+        auto alias = String::make(as_str(el.first).unwrap());
+        alias->make_ascii_lowercase();
+        auto uniform =
+            el.second.size() > 2
+                ? String::make(
+                      as_str(el.second).unwrap().get(usize(2), usize(el.second.size())).unwrap())
+                : String {};
+        uniform->make_ascii_lowercase();
+        if (alias.as_str() != folded_key.as_str() && uniform.as_str() != folded_key.as_str())
+            continue;
+        if (! resolved.empty() && resolved != el.second) return {};
+        resolved = el.second;
     }
-    return {};
+    return resolved;
 }
 
 bool IsShaderPositionUniform(const ShaderInfo& info, const std::string& glname) {

@@ -1504,10 +1504,12 @@ public:
         void Stop() { rstd::trait_call<3>(this); }
         void Pause() { rstd::trait_call<4>(this); }
         bool IsPlaying() const { return rstd::trait_call<5>(this); }
+        void Emit(u32 count) const { rstd::trait_call<6>(this, count); }
     };
 
     template<typename T>
-    using Funcs = TraitFuncs<&T::Get, &T::Apply, &T::Play, &T::Stop, &T::Pause, &T::IsPlaying>;
+    using Funcs =
+        TraitFuncs<&T::Get, &T::Apply, &T::Play, &T::Stop, &T::Pause, &T::IsPlaying, &T::Emit>;
 };
 
 // ============================================================================

@@ -201,6 +201,15 @@ struct ParticleNodeControl {
     }
     void Pause() { playback->playing.store(false, rstd::sync::atomic::Ordering::Release); }
     bool IsPlaying() const { return playback->playing.load(rstd::sync::atomic::Ordering::Acquire); }
+    void Emit(u32 count) const {
+        auto pending = playback->pending_emit_count.load(rstd::sync::atomic::Ordering::Relaxed);
+        while (! playback->pending_emit_count.compare_exchange_weak(
+            pending,
+            pending.saturating_add(count),
+            rstd::sync::atomic::Ordering::Release,
+            rstd::sync::atomic::Ordering::Relaxed)) {
+        }
+    }
 };
 
 void LoadControlPoint(SceneParseContext& context, ParticleSubSystem& system,
