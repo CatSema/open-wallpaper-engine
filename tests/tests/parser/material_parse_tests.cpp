@@ -4,6 +4,9 @@ import rstd.cppstd;
 import rstd;
 import wescene.json;
 import wescene.pkg.parse;
+import wescene.scene;
+import wescene.fs;
+import wavsen.audio;
 
 using namespace rstd::literals;
 using namespace rstd::prelude;
@@ -49,6 +52,64 @@ TEST(MaterialParser, ParsesLegacyUserShaderValues) {
     EXPECT_EQ(material.user_shader_values.at("flagcolor1"), "color2");
     EXPECT_EQ(material.user_shader_values.at("flagcolor2"), "color3");
     EXPECT_EQ(material.user_shader_values.at("schemecolor"), "color1");
+}
+
+TEST(MaterialParser, ExactShaderKeyWinsOverLegacySpelling) {
+    auto document = owe::wpscene::ParseSceneDocumentJson(R"({
+        "camera": {},
+        "general": {"orthogonalprojection": {"width": 128, "height": 128}},
+        "objects": [
+            {"id": 1, "name": "exact", "visible": true, "image": "models/util/solidlayer.json",
+             "effects": [{"file": "effects/tint/effect.json", "visible": true, "passes": [{
+                 "constantshadervalues": {"Color": "1 1 1", "color": "0 0 0"}
+             }]}]},
+            {"id": 2, "name": "legacy", "visible": true, "image": "models/util/solidlayer.json",
+             "effects": [{"file": "effects/tint/effect.json", "visible": true, "passes": [{
+                 "constantshadervalues": {"Color": "0.25 0.25 0.25"}
+             }]}]},
+            {"id": 3, "name": "uniform", "visible": true, "image": "models/util/solidlayer.json",
+             "effects": [{"file": "effects/tint/effect.json", "visible": true, "passes": [{
+                 "constantshadervalues": {"TintColor": "0.5 0.5 0.5"}
+             }]}]}
+        ]
+    })",
+                                                         owe::wpscene::kSceneVersionUnknown);
+    ASSERT_TRUE(document.is_some());
+    auto assets = owe::fs::make_physical_fs(owe::fs::ToPath(WAYWALLEN_ASSETS_DIR));
+    ASSERT_TRUE(assets.is_ok());
+    owe::fs::VFS vfs;
+    ASSERT_TRUE(vfs.mount("/assets"_str, rstd::move(assets).unwrap()).is_ok());
+    auto effect_assets = owe::fs::make_physical_fs(
+        owe::fs::ToPath(std::string(WAYWALLEN_ASSETS_DIR) + "/effects/tint"));
+    ASSERT_TRUE(effect_assets.is_ok());
+    ASSERT_TRUE(vfs.mount("/assets"_str, rstd::move(effect_assets).unwrap()).is_ok());
+    wavsen::audio::SoundManager sound_manager;
+    owe::SceneParser            parser;
+    auto                        parsed = parser.Parse(
+        "material-key-precedence"_str,
+        ref<owe::wpscene::SceneDocument>::from_raw_parts(rstd::addressof(*document)),
+        mut_ref<owe::fs::VFS>::from_raw_parts(rstd::addressof(vfs)),
+        mut_ref<wavsen::audio::SoundManager>::from_raw_parts(rstd::addressof(sound_manager)));
+    ASSERT_TRUE(parsed.is_ok());
+    auto  scene    = rstd::move(parsed).unwrap();
+    float expected = 0.0f;
+    for (const auto* name : { "exact", "legacy", "uniform" }) {
+        auto node = scene.scene->RootMut()->FindByName(name);
+        ASSERT_NE(node, nullptr);
+        ASSERT_TRUE(node->HasLayer());
+        auto& layer = node->Layer();
+        layer->ResolveEffect(*scene.scene->DefaultEffectMesh(), "effect");
+        ASSERT_FALSE(layer->ResolvedEffects().empty());
+        auto* effect = layer->ResolvedEffects().front();
+        ASSERT_FALSE(effect->nodes.empty());
+        auto* material = effect->nodes.front().sceneNode->Mesh()->Material();
+        ASSERT_NE(material, nullptr);
+        const auto& color = material->customShader.constValues.at("g_TintColor");
+        ASSERT_EQ(color.size(), usize(3));
+        for (usize i {}; i < color.size(); ++i)
+            EXPECT_FLOAT_EQ(color.data()[i.to_primitive()], expected);
+        expected += 0.25f;
+    }
 }
 
 TEST(MaterialParser, PreservesConstantShaderValueScriptBindingsAcrossPassMerge) {

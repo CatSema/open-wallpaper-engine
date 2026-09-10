@@ -554,7 +554,8 @@ bool IsLayerCompositeShader(std::string_view shader) {
            shader == "genericimage4" || shader == "passthrough";
 }
 
-std::string ResolveShaderMaterialKey(const ShaderInfo& info, std::string_view material_key) {
+std::string ResolveShaderMaterialKey(const ShaderInfo& info, const wpscene::Material& material,
+                                     std::string_view material_key) {
     if (auto it = info.alias.find(material_key); it != info.alias.end()) return it->second;
 
     auto folded_key = String::make(as_str(material_key).unwrap());
@@ -573,6 +574,10 @@ std::string ResolveShaderMaterialKey(const ShaderInfo& info, std::string_view ma
             continue;
         if (! resolved.empty() && resolved != el.second) return {};
         resolved = el.second;
+    }
+    // A legacy spelling must not overwrite an explicitly authored shader material key.
+    for (const auto& [alias, uniform] : info.alias) {
+        if (uniform == resolved && material.constantshadervalues.contains(alias)) return {};
     }
     return resolved;
 }
@@ -692,7 +697,7 @@ void RegisterShaderUserVarIndexImpl(Scene* pScene, const std::shared_ptr<SceneMa
         // Resolve effect-internal key → GLSL uniform name via alias.
         // LoadConstvalue's fallback search (alias entry whose value, after
         // dropping the leading "u_", matches the key) is honored here too.
-        std::string glname = ResolveShaderMaterialKey(info, effect_key);
+        std::string glname = ResolveShaderMaterialKey(info, wpmat, effect_key);
         if (glname.empty()) {
             rstd_warn("user binding '{}' → no shader uniform with material='{}'",
                       wallpaper_key,
@@ -704,7 +709,7 @@ void RegisterShaderUserVarIndexImpl(Scene* pScene, const std::shared_ptr<SceneMa
                                           String::make(as_str(glname).unwrap()));
     }
     for (const auto& [wallpaper_key, material_key] : wpmat.user_shader_values) {
-        std::string glname = ResolveShaderMaterialKey(info, material_key);
+        std::string glname = ResolveShaderMaterialKey(info, wpmat, material_key);
         if (glname.empty()) {
             rstd_warn("user shader value '{}' -> no shader uniform with material='{}'",
                       wallpaper_key,
@@ -922,7 +927,7 @@ void LoadConstvalueImpl(SceneParseContext& context, SceneMaterial& material,
     for (const auto& cs : wpmat.constantshadervalues) {
         const auto&               name   = cs.first;
         const std::vector<float>& value  = cs.second;
-        std::string               glname = ResolveShaderMaterialKey(info, name);
+        std::string               glname = ResolveShaderMaterialKey(info, wpmat, name);
         if (glname.empty()) {
             if (IsLegacyAtmosphereShadowValue(wpmat, name)) continue;
             if (wpmat.constantshadervalues_bindings.HasAnimation(
@@ -1012,7 +1017,7 @@ void WireMaterialShaderValueScripts(SceneParseContext& context, const Arc<SceneN
     material->RegisterAnimations(*owner);
     for (const auto& field_binding : wpmat.constantshadervalues_bindings.Entries()) {
         auto material_key = rstd::cppstd::to_string(field_binding.field.as_str());
-        auto uniform_name = ResolveShaderMaterialKey(info, material_key);
+        auto uniform_name = ResolveShaderMaterialKey(info, wpmat, material_key);
         if (uniform_name.empty()) continue;
         auto animation =
             material->ShaderValueAnimation(rstd::cppstd::as_str(uniform_name).unwrap());
