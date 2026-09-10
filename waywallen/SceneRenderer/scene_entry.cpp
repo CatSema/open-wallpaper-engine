@@ -88,12 +88,12 @@ bool env_flag_enabled(const char* name) {
 }
 
 std::string shader_cache_dir() {
-    auto                configured = rstd::env::var("XDG_CACHE_HOME"_str);
+    auto                configured = rstd::env::var("XDG_CACHE_HOME"_str).ok();
     rstd::path::PathBuf path;
     if (configured.is_some() && ! configured->is_empty()) {
         path = rstd::path::PathBuf::from(rstd::move(configured).unwrap_unchecked());
     } else {
-        auto home = rstd::env::var("HOME"_str);
+        auto home = rstd::env::var("HOME"_str).ok();
         if (home.is_none() || home->is_empty()) return {};
         path = rstd::path::PathBuf::from(rstd::move(home).unwrap_unchecked());
         path.push(".cache"_str);
