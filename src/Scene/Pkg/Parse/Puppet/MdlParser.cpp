@@ -411,10 +411,10 @@ bool ParseMesh(fs::BinaryReader& f, const MdlHeader& header, Mdl::Mesh& mesh,
             uint32_t parts_num = parts_bytes / 16;
             ResetDefault(mesh.parts, usize(parts_num));
             for (auto& part : mesh.parts) {
-                part.id = f.ReadUint32();
-                (void)f.ReadUint32(); // reserved 0
-                part.start = f.ReadUint32();
-                part.size  = f.ReadUint32();
+                part.id                = f.ReadUint32();
+                part.draw_order_offset = f.ReadInt32();
+                part.start             = f.ReadUint32();
+                part.size              = f.ReadUint32();
             }
         }
         if (header.mdlv > 21) {
@@ -596,7 +596,8 @@ bool ParseMDLS(fs::BinaryReader& f, Mdl& mdl, std::string_view path) {
             if (mdl.mdls >= 3) {
                 uint8_t has_depth = f.ReadUint8();
                 if (has_depth) {
-                    for (unsigned i = 0; i < bones_num; ++i) (void)f.ReadUint32();
+                    for (unsigned i = 0; i < bones_num; ++i)
+                        (*mdl.puppet)->bones[usize(i)].draw_order = f.ReadInt32();
                 }
             }
         }
@@ -1308,6 +1309,28 @@ void MdlParser::GenMeshFromMdl(SceneMesh::Submesh& submesh, const Mdl::Mesh& src
             submesh.draw_ranges.push_back({ u32(p.start), u32(p.size) });
         }
     }
+}
+
+void MdlParser::BindDrawOrder(SceneMesh::Submesh& submesh, const Mdl::Mesh& src,
+                              Arc<PuppetLayer> layer) {
+    if (submesh.draw_ranges.empty() || ! layer->HasDrawOrderAnimation()) return;
+    Vec<PuppetLayer::PartOrder> parts;
+    parts.reserve(usize(submesh.draw_ranges.size()));
+    for (const auto& range : submesh.draw_ranges) {
+        const Mdl::Mesh::Part* found = nullptr;
+        for (const auto& part : src.parts) {
+            if (u32(part.start) == range.first_index && u32(part.size) == range.index_count) {
+                found = &part;
+                break;
+            }
+        }
+        if (! found) return;
+        parts.push(PuppetLayer::PartOrder { u32(found->id), i32(found->draw_order_offset) });
+    }
+    submesh.draw_range_order = Some(
+        Arc<dyn<Fn<Vec<usize>()>>>::make([layer = rstd::move(layer), parts = rstd::move(parts)]() {
+            return layer->DrawOrder(parts.as_slice());
+        }));
 }
 
 void MdlParser::GenMaskSubmeshFromMdl(SceneMesh::Submesh& submesh, const Mdl::Mesh& src,

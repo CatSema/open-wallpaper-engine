@@ -136,6 +136,120 @@ TEST(Puppet, SortCurvesDoNotScaleBoneTransforms) {
     }
 }
 
+TEST(Puppet, DrawOrderUsesPlaybackAndStableIntegerKeys) {
+    auto puppet = Arc<owe::Puppet>::make();
+    for (int depth : { 100, 200, 300 }) puppet->bones.emplace_back().draw_order = depth;
+    auto& animation  = puppet->anims.emplace_back();
+    animation.id     = 42;
+    animation.mode   = owe::Puppet::PlayMode::Single;
+    animation.fps    = 1.0f;
+    animation.length = 1;
+    for (float target : { 500.0f, -200.0f, 100.0f }) {
+        auto& curve = animation.scalar_curves.emplace_back();
+        curve.values.push(0.0f);
+        curve.values.emplace_back(target);
+    }
+    puppet->prepared();
+    owe::PuppetLayer                 layer(puppet.clone());
+    owe::PuppetLayer::AnimationLayer authored { .id = 42, .blend = 0.5, .visible = true };
+    layer.prepared(slice<owe::PuppetLayer::AnimationLayer>::from_raw_parts(&authored, usize(1)));
+    const owe::PuppetLayer::PartOrder parts[] = { { u32(0), i32(0) },
+                                                  { u32(1), i32(0) },
+                                                  { u32(2), i32(0) } };
+    const auto input = slice<owe::PuppetLayer::PartOrder>::from_raw_parts(parts, usize(3));
+    layer.AnimationPlaybacks()[usize()]->Pause();
+    layer.AnimationPlaybacks()[usize()]->SetFrame(i32(1));
+    auto order = layer.DrawOrder(input);
+    ASSERT_EQ(order.len(), usize(3));
+    EXPECT_EQ(order[usize(0)], usize(1));
+    EXPECT_EQ(order[usize(1)], usize(2));
+    EXPECT_EQ(order[usize(2)], usize(0));
+    layer.AnimationPlaybacks()[usize()]->SetFrame(i32(0));
+    order = layer.DrawOrder(input);
+    EXPECT_EQ(order[usize(0)], usize(0));
+    EXPECT_EQ(order[usize(1)], usize(1));
+    EXPECT_EQ(order[usize(2)], usize(2));
+}
+
+TEST(Puppet, DrawOrderKeepsTiesAndAppliesPartOffsets) {
+    auto puppet                             = Arc<owe::Puppet>::make();
+    puppet->bones.emplace_back().draw_order = 100;
+    puppet->prepared();
+    owe::PuppetLayer layer(puppet.clone());
+    layer.prepared(slice<owe::PuppetLayer::AnimationLayer> {});
+    const owe::PuppetLayer::PartOrder parts[] = { { u32(0), i32(0) },
+                                                  { u32(0), i32(-200) },
+                                                  { u32(0), i32(0) } };
+    const auto                        order =
+        layer.DrawOrder(slice<owe::PuppetLayer::PartOrder>::from_raw_parts(parts, usize(3)));
+    EXPECT_EQ(order[usize(0)], usize(1));
+    EXPECT_EQ(order[usize(1)], usize(0));
+    EXPECT_EQ(order[usize(2)], usize(2));
+}
+
+TEST(Puppet, DrawOrderBoundsAdditiveAgainstCurrentAndSample) {
+    auto puppet                             = Arc<owe::Puppet>::make();
+    puppet->bones.emplace_back().draw_order = 100;
+    puppet->bones.emplace_back().draw_order = 100;
+    for (int id : { 1, 2 }) {
+        auto& animation  = puppet->anims.emplace_back();
+        animation.id     = id;
+        animation.fps    = 1.0f;
+        animation.length = 1;
+        animation.scalar_curves.emplace_back().values.push(id == 1 ? 300.0f : 150.0f);
+        animation.scalar_curves.emplace_back().values.push(id == 1 ? 200.0f : 325.0f);
+    }
+    puppet->prepared();
+    owe::PuppetLayer                 layer(puppet.clone());
+    owe::PuppetLayer::AnimationLayer authored[] = {
+        { .id = 1, .blend = 1.0, .visible = true },
+        { .id = 2, .blend = 1.0, .visible = true, .additive = true },
+    };
+    layer.prepared(slice<owe::PuppetLayer::AnimationLayer>::from_raw_parts(authored, usize(2)));
+    const owe::PuppetLayer::PartOrder parts[] = { { u32(0), i32(0) }, { u32(1), i32(0) } };
+    const auto                        order =
+        layer.DrawOrder(slice<owe::PuppetLayer::PartOrder>::from_raw_parts(parts, usize(2)));
+    EXPECT_EQ(order[usize(0)], usize(0));
+    EXPECT_EQ(order[usize(1)], usize(1));
+}
+
+TEST(MdlMesh, DrawOrderWithoutAnimationPreservesFileOrder) {
+    auto puppet = Arc<owe::Puppet>::make();
+    puppet->prepared();
+    auto layer = Arc<owe::PuppetLayer>::make(puppet.clone());
+    layer->prepared(slice<owe::PuppetLayer::AnimationLayer> {});
+    owe::Mdl::Mesh source;
+    source.parts.push(owe::Mdl::Mesh::Part { 2, 0, 3 });
+    owe::SceneMesh::Submesh submesh;
+    submesh.draw_ranges.push_back({ u32(0), u32(3) });
+    owe::MdlParser::BindDrawOrder(submesh, source, layer.clone());
+    EXPECT_TRUE(submesh.draw_range_order.is_none());
+}
+
+TEST(MdlMesh, DrawOrderOwnsFilteredPartMapping) {
+    auto puppet = Arc<owe::Puppet>::make();
+    for (int depth : { 100, 200, 300 }) puppet->bones.emplace_back().draw_order = depth;
+    puppet->anims.emplace_back().scalar_curves.emplace_back();
+    puppet->prepared();
+    auto layer = Arc<owe::PuppetLayer>::make(puppet.clone());
+    layer->prepared(slice<owe::PuppetLayer::AnimationLayer> {});
+    owe::SceneMesh::Submesh submesh;
+    {
+        owe::Mdl::Mesh source;
+        source.parts.push(owe::Mdl::Mesh::Part { 2, 0, 3 });
+        source.parts.push(owe::Mdl::Mesh::Part { 1, 3, 3 });
+        source.parts.push(owe::Mdl::Mesh::Part { 0, 6, 3 });
+        submesh.draw_ranges.push_back({ u32(0), u32(3) });
+        submesh.draw_ranges.push_back({ u32(6), u32(3) });
+        owe::MdlParser::BindDrawOrder(submesh, source, layer.clone());
+    }
+    ASSERT_TRUE(submesh.draw_range_order.is_some());
+    const auto order = (*submesh.draw_range_order)->operator()();
+    ASSERT_EQ(order.len(), usize(2));
+    EXPECT_EQ(order[usize(0)], usize(1));
+    EXPECT_EQ(order[usize(1)], usize(0));
+}
+
 TEST(MdlMesh, KeepsPuppetPositionsInMdlLocalSpace) {
     owe::Mdl::Mesh source;
     source.positions.push(array<float, 3> { 244.0f, 349.5f, 0.0f });

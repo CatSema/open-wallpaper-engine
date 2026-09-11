@@ -449,9 +449,10 @@ void PuppetLayer::prepared(slice<AnimationLayer> alayers) {
         }
 
         m_layers[i] = Layer {
-            .anim_layer = rstd::move(out_layer),
-            .anim       = ok ? matched : nullptr,
-            .playback   = rstd::move(playback),
+            .anim_layer          = rstd::move(out_layer),
+            .anim                = ok ? matched : nullptr,
+            .playback            = rstd::move(playback),
+            .draw_order_additive = layer.additive,
         };
     }
     for (const auto& layer : m_layers) {
@@ -539,6 +540,63 @@ void PuppetLayer::updateInterpolation(double) noexcept {
             layer.interp_info = layer.anim->getInterpolationInfo(&position);
         }
     }
+}
+
+bool PuppetLayer::HasDrawOrderAnimation() const {
+    for (const auto& animation : m_puppet->anims) {
+        if (! animation.scalar_curves.is_empty()) return true;
+    }
+    return false;
+}
+
+auto PuppetLayer::DrawOrder(slice<PartOrder> parts) const -> Vec<usize> {
+    Vec<double> values;
+    values.reserve(m_puppet->bones.len());
+    for (const auto& bone : m_puppet->bones) values.emplace_back(bone.draw_order);
+    for (const auto& layer : m_layers) {
+        if (! layer.anim || ! layer.anim_layer.visible) continue;
+        const double weight = std::clamp(layer.anim_layer.blend, 0.0, 1.0);
+        if (weight == 0.0) continue;
+        double     position = layer.playback.is_some() ? (*layer.playback)->PositionSeconds()
+                                                       : layer.anim_layer.cur_time;
+        const auto info     = layer.anim->getInterpolationInfo(&position);
+        for (usize bone {}; bone < values.len() && bone < layer.anim->scalar_curves.len(); ++bone) {
+            if (bone < layer.anim->bone_tracks.len() &&
+                (layer.anim->bone_tracks[bone].unk & 3) == 1)
+                continue;
+            const auto& curve = layer.anim->scalar_curves[bone].values;
+            if (curve.is_empty()) continue;
+            // Draw order is sampled at the current keyframe, without TRS interpolation.
+            const auto frame =
+                rstd::cmp::min(info.t == 1.0 ? info.frame_b : info.frame_a, curve.len() - usize(1));
+            const double sample = curve[frame];
+            auto&        value  = values[bone];
+            if (layer.draw_order_additive) {
+                const double next = value + weight * (sample - m_puppet->bones[bone].draw_order);
+                value = std::clamp(next, std::min(value, sample), std::max(value, sample));
+            } else {
+                value += weight * (sample - value);
+            }
+        }
+    }
+    Vec<i32>   keys;
+    Vec<usize> order;
+    keys.reserve(parts.len());
+    order.reserve(parts.len());
+    for (usize index {}; index < parts.len(); ++index) {
+        const auto&  part  = parts[index];
+        const usize  bone  = rstd::as_cast<usize>(part.bone);
+        const double value = (bone < values.len() ? values[bone] : 0.0) +
+                             static_cast<double>(part.offset.to_primitive());
+        const double key = std::isnan(value) ? 0.0 : std::clamp(value, -2147483648.0, 2147483647.0);
+        keys.push(i32(static_cast<rstd::int32_t>(key)));
+        order.emplace_back(index);
+    }
+    rstd::slice_::sort_unstable_by(order.as_mut_slice().as_mut_ref(), [&](usize left, usize right) {
+        if (keys[left] != keys[right]) return keys[left] < keys[right];
+        return left < right;
+    });
+    return order;
 }
 
 PuppetLayer::PuppetLayer(Arc<Puppet> pup): m_puppet(rstd::move(pup)) {}

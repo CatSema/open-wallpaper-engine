@@ -934,10 +934,11 @@ public:
     // exactly one (single-slot compat); SceneParser will emit N for
     // .mdl meshes with mesh_count > 1.
     struct Submesh {
-        std::vector<SceneVertexArray> vertex_arrays;
-        std::vector<SceneIndexArray>  index_arrays;
-        std::vector<DrawRange>        draw_ranges;
-        u32                           material_slot {};
+        std::vector<SceneVertexArray>      vertex_arrays;
+        std::vector<SceneIndexArray>       index_arrays;
+        std::vector<DrawRange>             draw_ranges;
+        Option<Arc<dyn<Fn<Vec<usize>()>>>> draw_range_order;
+        u32                                material_slot {};
         // Non-empty value redirects this submesh's pass output to the
         // named RT (instead of the SceneNode's default). Used by puppet
         // clipping-mask submeshes to write into a shared `_rt_puppet_mask`

@@ -38,6 +38,7 @@ public:
         String name;
         // hexpat MDLS Bone.sim_type: 0=static, 1=physics target, 3=IK chain.
         int32_t         sim_type { 0 };
+        int32_t         draw_order { 0 };
         Eigen::Affine3f local_bind { Eigen::Affine3f::Identity() };
         uint32_t        bind_parent { NO_PARENT };
         uint32_t        anim_parent { NO_PARENT };
@@ -122,7 +123,7 @@ public:
 
     // Per-bone, per-frame curve (anim.length + 1 samples). Reused by both the
     // mdla>=3 blend_curves block (0..1 weights) and mdla==6 scalar_curves
-    // (typically constant per curve).
+    // (draw order values).
     struct BoneFrameCurve {
         Vec<float> values;
     };
@@ -174,7 +175,7 @@ public:
         array<float, 3> aabb_min {};
         array<float, 3> aabb_max {};
         bool            has_aabb { false };
-        // mdla==6 per-bone scalar curves (same shape as blend_curves).
+        // MDLA v6 per-bone draw order curves, sampled independently of TRS.
         Vec<BoneFrameCurve> scalar_curves;
         // Source animation and frame range for editor-created clips.
         Option<AnimSourceClip> source_clip;
@@ -282,6 +283,13 @@ public:
     auto AnimationPlaybacks() const noexcept -> slice<Arc<SceneAnimationPlayback>>;
     auto TextureChannelBlendMap(double time) noexcept -> slice<float>;
 
+    struct PartOrder {
+        u32 bone;
+        i32 offset;
+    };
+    auto DrawOrder(slice<PartOrder>) const -> Vec<usize>;
+    bool HasDrawOrderAnimation() const;
+
     void updateInterpolation(double time) noexcept;
 
 private:
@@ -289,6 +297,7 @@ private:
         AnimationLayer                       anim_layer;
         const Puppet::Animation*             anim { nullptr };
         Option<Arc<SceneAnimationPlayback>>  playback;
+        bool                                 draw_order_additive { false };
         Puppet::Animation::InterpolationInfo interp_info {};
 
         operator bool() const noexcept { return anim != nullptr; };

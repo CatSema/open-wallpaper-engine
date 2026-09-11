@@ -1330,14 +1330,21 @@ void CustomShaderPass::recordRenderScopeDraw(PassRecordContext& context) {
                             0,
                             0);
         } else {
-            // Per-part drawing — preserves the file's z-order so later parts
-            // overdraw earlier ones (eyelid over pupil during blink).
-            for (const auto& r : ranges) {
+            auto draw_range = [&](const SceneMesh::DrawRange& r) {
                 cmd.DrawIndexed(r.index_count.to_primitive(),
                                 m_desc.instance_count.to_primitive(),
                                 r.first_index.to_primitive(),
                                 0,
                                 0);
+            };
+            const auto& source = submeshes[submesh_index].draw_range_order;
+            if (source.is_some()) {
+                const auto order = (*source)->operator()();
+                for (auto index : order) {
+                    if (index < usize(ranges.size())) draw_range(ranges[index.to_primitive()]);
+                }
+            } else {
+                for (const auto& range : ranges) draw_range(range);
             }
         }
     } else {

@@ -513,6 +513,8 @@ void ParseModelObjImpl(SceneParseContext& context, wpscene::ModelObject& model_o
         MdlParser::GenMeshFromMdl(
             submesh, mdl_mesh, { texcoord_scale[usize()], texcoord_scale[usize(1)] });
         submesh.material_slot = material_slot;
+        if (model_puppet_layer.is_some())
+            MdlParser::BindDrawOrder(submesh, mdl_mesh, (*model_puppet_layer).clone());
     }
 
     if (mesh->Submeshes().empty()) {

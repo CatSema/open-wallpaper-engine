@@ -58,6 +58,7 @@ struct Mdl {
             uint32_t id;
             uint32_t start;
             uint32_t size;
+            int32_t  draw_order_offset { 0 };
         };
         Vec<array<float, 2>> part_uv2;
         Vec<uint32_t>        part_uv2_pad;
@@ -134,6 +135,7 @@ public:
     static void GenMaskSubmeshFromMdl(SceneMesh::Submesh& submesh, const Mdl::Mesh& src,
                                       slice<uint32_t> clip_part_ids,
                                       array<float, 2> texcoord_scale = { 1.0f, 1.0f });
+    static void BindDrawOrder(SceneMesh::Submesh&, const Mdl::Mesh&, Arc<PuppetLayer>);
 };
 
 } // namespace owe

@@ -576,6 +576,11 @@ void ParseImageObjImpl(SceneParseContext& context, wpscene::ImageObject& img_obj
         }
     }
 
+    if (image_puppet_layer.is_some() && primary_puppet_mesh != nullptr) {
+        auto& ordered_mesh = hasEffect ? effct_final_mesh : mesh;
+        for (auto& submesh : ordered_mesh.Submeshes())
+            MdlParser::BindDrawOrder(submesh, *primary_puppet_mesh, (*image_puppet_layer).clone());
+    }
     spImgNode->AddMesh(spMesh);
 
     SetUniformConfig(context, spImgNode, rstd::move(svData));
