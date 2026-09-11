@@ -526,7 +526,8 @@ bool ParseMDLS(fs::BinaryReader& f, Mdl& mdl, std::string_view path) {
         uint16_t extras_flag = f.ReadUint16();
 
         if (mdl.mdls == 2) {
-            uint8_t has_world_binds = f.ReadUint8();
+            uint8_t has_world_binds                  = f.ReadUint8();
+            (*mdl.puppet)->additive_uses_first_frame = ! has_world_binds;
             if (has_world_binds) {
                 for (auto& bone : bones) {
                     auto& reference = bone.animation_reference.insert(Eigen::Affine3f::Identity());

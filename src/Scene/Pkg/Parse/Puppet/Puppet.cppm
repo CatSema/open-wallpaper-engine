@@ -240,6 +240,7 @@ public:
     // parent chain and pivot scale/rotation around the centroid; MDLV22+
     // uses standard chain LBS. Set at parse time from `header.mdlv`.
     bool world_anchored_bones { false };
+    bool additive_uses_first_frame { false };
 
     slice<Eigen::Affine3f>  genFrame(PuppetLayer&, double time) noexcept;
     void                    prepared();

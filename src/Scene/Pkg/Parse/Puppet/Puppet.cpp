@@ -258,12 +258,15 @@ slice<Eigen::Affine3f> Puppet::genFrame(PuppetLayer& puppet_layer, double time) 
             double blend = LayerBoneBlend(*layer.anim, i, info, alayer.blend);
             if (blend <= 0.0) continue;
 
+            // MDLS v2 without an explicit reference pose encodes additive
+            // deltas from each clip's first frame, not the mesh bind pose.
+            const bool use_reference_pose = alayer.additive && ! additive_uses_first_frame;
             const auto reference_position =
-                alayer.additive ? animation_reference.translation() : frame_base.position;
+                use_reference_pose ? animation_reference.translation() : frame_base.position;
             const auto reference_rotation =
-                alayer.additive ? animation_linear.rotation : frame_base.quaternion;
+                use_reference_pose ? animation_linear.rotation : frame_base.quaternion;
             const auto reference_scale =
-                alayer.additive ? animation_linear.scale : frame_base.scale;
+                use_reference_pose ? animation_linear.scale : frame_base.scale;
 
             auto frame_a_quat_delta = frame_a.quaternion * reference_rotation.conjugate();
             auto frame_b_quat_delta = frame_b.quaternion * reference_rotation.conjugate();
