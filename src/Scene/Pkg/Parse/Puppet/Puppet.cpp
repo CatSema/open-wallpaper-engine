@@ -58,8 +58,8 @@ static usize TextureChannelTrackCount(const Puppet::Animation& animation) {
 
 static double LayerBoneBlend(const Puppet::Animation& anim, usize bone_index,
                              const Puppet::Animation::InterpolationInfo& info, double layer_blend) {
+    // MDLA v6 scalar curves carry sort data, not transform blend weights.
     double blend = layer_blend * SampleBoneCurve(anim.blend_curves, bone_index, info);
-    blend *= SampleBoneCurve(anim.scalar_curves, bone_index, info);
     return std::max(0.0, blend);
 }
 

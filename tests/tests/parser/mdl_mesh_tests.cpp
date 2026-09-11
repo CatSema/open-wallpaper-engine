@@ -94,6 +94,48 @@ TEST(Puppet, SamplesTextureChannelBlendMapFromAnimationPlayback) {
     EXPECT_FLOAT_EQ(blend_map[usize(3)], 0.0f);
 }
 
+TEST(Puppet, SortCurvesDoNotScaleBoneTransforms) {
+    for (float scalar : { 0.0f, -6100.0f, 9500.0f }) {
+        auto puppet = Arc<owe::Puppet>::make();
+        puppet->bones.emplace_back();
+        auto& animation  = puppet->anims.emplace_back();
+        animation.id     = 688;
+        animation.mode   = owe::Puppet::PlayMode::Single;
+        animation.fps    = 1.0f;
+        animation.length = 1;
+        auto& track      = animation.bone_tracks.emplace_back();
+        track.frames.push(owe::Puppet::BoneFrame {
+            .position = Eigen::Vector3f::Zero(),
+            .angle    = Eigen::Vector3f::Zero(),
+            .scale    = Eigen::Vector3f::Ones(),
+        });
+        track.frames.push(owe::Puppet::BoneFrame {
+            .position = Eigen::Vector3f(4.0f, 0.0f, 0.0f),
+            .angle    = Eigen::Vector3f::Zero(),
+            .scale    = Eigen::Vector3f(1.0f, 0.5f, 1.0f),
+        });
+        auto& curve = animation.scalar_curves.emplace_back();
+        curve.values.emplace_back(scalar);
+        curve.values.emplace_back(scalar);
+        puppet->prepared();
+        owe::PuppetLayer                 layer(puppet.clone());
+        owe::PuppetLayer::AnimationLayer authored {
+            .id       = 688,
+            .blend    = 0.5,
+            .visible  = true,
+            .additive = true,
+        };
+        layer.prepared(
+            slice<owe::PuppetLayer::AnimationLayer>::from_raw_parts(&authored, usize(1)));
+        layer.AnimationPlaybacks()[usize()]->SetFrame(i32(1));
+        layer.AnimationPlaybacks()[usize()]->Pause();
+        auto matrices = layer.genFrame(0.0);
+        ASSERT_EQ(matrices.len(), usize(1));
+        EXPECT_FLOAT_EQ(matrices[usize()].translation().x(), 2.0f);
+        EXPECT_FLOAT_EQ(matrices[usize()].linear()(1, 1), 0.75f);
+    }
+}
+
 TEST(MdlMesh, KeepsPuppetPositionsInMdlLocalSpace) {
     owe::Mdl::Mesh source;
     source.positions.push(array<float, 3> { 244.0f, 349.5f, 0.0f });
