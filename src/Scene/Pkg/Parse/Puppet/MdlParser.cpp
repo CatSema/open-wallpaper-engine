@@ -528,9 +528,12 @@ bool ParseMDLS(fs::BinaryReader& f, Mdl& mdl, std::string_view path) {
         if (mdl.mdls == 2) {
             uint8_t has_world_binds = f.ReadUint8();
             if (has_world_binds) {
-                // Per-bone world-bind mat4 inline (mdls v2 only).
-                for (unsigned i = 0; i < bones_num; ++i)
-                    for (unsigned j = 0; j < 16; ++j) f.ReadFloat();
+                for (auto& bone : bones) {
+                    auto& reference = bone.animation_reference.insert(Eigen::Affine3f::Identity());
+                    for (auto col : reference.matrix().colwise()) {
+                        for (auto& value : col) value = f.ReadFloat();
+                    }
+                }
             }
             uint8_t pad[8];
             f.Read(pad, sizeof(pad));

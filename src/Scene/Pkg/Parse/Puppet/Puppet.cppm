@@ -37,11 +37,12 @@ public:
     struct Bone {
         String name;
         // hexpat MDLS Bone.sim_type: 0=static, 1=physics target, 3=IK chain.
-        int32_t         sim_type { 0 };
-        int32_t         draw_order { 0 };
-        Eigen::Affine3f local_bind { Eigen::Affine3f::Identity() };
-        uint32_t        bind_parent { NO_PARENT };
-        uint32_t        anim_parent { NO_PARENT };
+        int32_t                 sim_type { 0 };
+        int32_t                 draw_order { 0 };
+        Eigen::Affine3f         local_bind { Eigen::Affine3f::Identity() };
+        Option<Eigen::Affine3f> animation_reference;
+        uint32_t                bind_parent { NO_PARENT };
+        uint32_t                anim_parent { NO_PARENT };
         // Original on-file parent index. MDLV21 flattens bind_parent for
         // skinning while keeping anim_parent on this chain.
         uint32_t file_parent { NO_PARENT };

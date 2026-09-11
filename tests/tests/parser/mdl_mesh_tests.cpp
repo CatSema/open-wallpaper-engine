@@ -94,6 +94,63 @@ TEST(Puppet, SamplesTextureChannelBlendMapFromAnimationPlayback) {
     EXPECT_FLOAT_EQ(blend_map[usize(3)], 0.0f);
 }
 
+TEST(Puppet, AdditiveUsesSeparateAnimationReference) {
+    auto  puppet                  = Arc<owe::Puppet>::make();
+    auto& bone                    = puppet->bones.emplace_back();
+    bone.local_bind.translation() = Eigen::Vector3f(100.0f, 200.0f, 0.0f);
+    Eigen::Affine3f reference     = Eigen::Affine3f::Identity();
+    reference.translate(Eigen::Vector3f(10.0f, 20.0f, 0.0f));
+    reference.rotate(Eigen::AngleAxisf(0.25f, Eigen::Vector3f::UnitZ()));
+    reference.scale(Eigen::Vector3f(2.0f, 3.0f, 1.0f));
+    bone.animation_reference.insert(Eigen::Affine3f(reference));
+    for (int id : { 1, 2 }) {
+        auto& animation  = puppet->anims.emplace_back();
+        animation.id     = id;
+        animation.fps    = 1.0f;
+        animation.length = 1;
+        animation.mode   = owe::Puppet::PlayMode::Single;
+        auto& track      = animation.bone_tracks.emplace_back();
+        for (int frame : { 0, 1 }) {
+            track.frames.push(owe::Puppet::BoneFrame {
+                .position = Eigen::Vector3f(10.0f + (id == 2 ? 4.0f * frame : 0.0f), 20.0f, 0.0f),
+                .angle    = Eigen::Vector3f(0.0f, 0.0f, 0.25f),
+                .scale    = Eigen::Vector3f(2.0f, 3.0f, 1.0f),
+            });
+        }
+    }
+    puppet->prepared();
+    owe::PuppetLayer                 layer(puppet.clone());
+    owe::PuppetLayer::AnimationLayer authored[] = {
+        { .id = 1, .blend = 1.0, .visible = true },
+        { .id = 2, .blend = 0.5, .visible = true, .additive = true },
+    };
+    layer.prepared(slice<owe::PuppetLayer::AnimationLayer>::from_raw_parts(authored, usize(2)));
+    for (const auto& playback : layer.AnimationPlaybacks()) playback->Pause();
+    auto expected = reference * bone.inv_bind;
+    EXPECT_TRUE(layer.genFrame(0.0)[usize()].matrix().isApprox(expected.matrix(), 0.0001f));
+    layer.AnimationPlaybacks()[usize(1)]->SetFrame(i32(1));
+    expected.pretranslate(Eigen::Vector3f(2.0f, 0.0f, 0.0f));
+    EXPECT_TRUE(layer.genFrame(0.0)[usize()].matrix().isApprox(expected.matrix(), 0.0001f));
+}
+
+TEST(MdlMesh, ReadsLegacyAnimationReferenceWithoutReplacingMeshBind) {
+    const auto pkg_path =
+        std::filesystem::path(WAYWALLEN_WORKSHOP_DIR) / "3148125112" / "scene.pkg";
+    if (! std::filesystem::exists(pkg_path)) GTEST_SKIP() << "workshop 3148125112 is not available";
+    owe::fs::VFS vfs;
+    auto         pkg_fs = owe::fs::WPPkgFs::open(owe::fs::ToPath(pkg_path.string()));
+    ASSERT_TRUE(pkg_fs.is_ok());
+    ASSERT_TRUE(vfs.mount("/assets"_str, pkg_fs->mount_handle()).is_ok());
+    owe::Mdl mdl;
+    ASSERT_TRUE(owe::MdlParser::Parse("models/人物2_puppet.mdl"_str, vfs, mdl));
+    ASSERT_TRUE(mdl.puppet.is_some());
+    ASSERT_EQ(mdl.mdls, 2);
+    const auto& bone = (*mdl.puppet)->bones[usize(3)];
+    ASSERT_TRUE(bone.animation_reference.is_some());
+    EXPECT_FLOAT_EQ(bone.local_bind.translation().x(), 1627.5517578125f);
+    EXPECT_FLOAT_EQ(bone.animation_reference->translation().x(), 318.3017578125f);
+}
+
 TEST(Puppet, SortCurvesDoNotScaleBoneTransforms) {
     for (float scalar : { 0.0f, -6100.0f, 9500.0f }) {
         auto puppet = Arc<owe::Puppet>::make();

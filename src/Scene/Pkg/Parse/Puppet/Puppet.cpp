@@ -225,6 +225,11 @@ slice<Eigen::Affine3f> Puppet::genFrame(PuppetLayer& puppet_layer, double time) 
         // bones (matches world_bind's pretranslate in prepared()) and is added
         // after layer deltas so the replacement anchor stays in puppet space.
         const BindLinear bind_linear = DecomposeBindLinear(bone.local_bind.linear());
+        // Older MDLS stores a separate animation rest pose; the mesh bind pose
+        // may still describe the unpacked pieces, not the assembled puppet.
+        const auto& animation_reference =
+            bone.animation_reference.is_some() ? *bone.animation_reference : bone.local_bind;
+        const auto animation_linear = DecomposeBindLinear(animation_reference.linear());
 
         Vector3f trans { replace_base_frame != nullptr ? replace_base_frame->position
                                                        : bone.local_bind.translation() };
@@ -254,10 +259,11 @@ slice<Eigen::Affine3f> Puppet::genFrame(PuppetLayer& puppet_layer, double time) 
             if (blend <= 0.0) continue;
 
             const auto reference_position =
-                alayer.additive ? bone.local_bind.translation() : frame_base.position;
+                alayer.additive ? animation_reference.translation() : frame_base.position;
             const auto reference_rotation =
-                alayer.additive ? bind_linear.rotation : frame_base.quaternion;
-            const auto reference_scale = alayer.additive ? bind_linear.scale : frame_base.scale;
+                alayer.additive ? animation_linear.rotation : frame_base.quaternion;
+            const auto reference_scale =
+                alayer.additive ? animation_linear.scale : frame_base.scale;
 
             auto frame_a_quat_delta = frame_a.quaternion * reference_rotation.conjugate();
             auto frame_b_quat_delta = frame_b.quaternion * reference_rotation.conjugate();
