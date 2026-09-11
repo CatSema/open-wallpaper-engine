@@ -107,6 +107,62 @@ Arc<SceneNode> CloneRegisteredNode(Scene& scene, ref<SceneNode> source, ref<str>
     return node;
 }
 
+Vec<SceneParseContext::MaterialFieldScriptTemplate>
+TakeMaterialScriptTemplates(SceneParseContext& context, const Arc<SceneNode>& node) {
+    Vec<SceneParseContext::MaterialFieldScriptTemplate> result;
+    if (! node->MeshShared()) return result;
+    const auto& materials = node->MeshShared()->MaterialSlots();
+    for (usize index {}; index < usize(materials.size()); ++index) {
+        const auto& material = materials[index.to_primitive()];
+        if (! material) continue;
+        auto templates = context.material_script_templates.remove(material.get());
+        if (templates.is_none()) continue;
+        for (auto& script_template : *templates) {
+            script_template.material_slot = rstd::as_cast<u32>(index);
+            result.push(rstd::move(script_template));
+        }
+    }
+    return result;
+}
+
+void InstantiateDynamicMaterialScripts(script::ScriptScene& scripts, Scene& scene,
+                                       const SceneParseContext::DynamicImagePrototype& prototype,
+                                       const Arc<SceneNode>&                           node) {
+    if (! node->MeshShared()) return;
+    const auto& materials = node->MeshShared()->MaterialSlots();
+    for (const auto& script_template : prototype.material_scripts) {
+        auto index = rstd::as_cast<usize>(script_template.material_slot);
+        if (index >= usize(materials.size())) continue;
+        const auto& material = materials[index.to_primitive()];
+        if (! material) continue;
+
+        auto  animation    = material->ShaderValueAnimation(script_template.uniform_name.as_str());
+        auto* field_script = scripts.runtime().MakeFieldScript(
+            as_string_view(script_template.source),
+            as_string_view(script_template.sha),
+            script_template.kind,
+            script_template.properties,
+            script_template.initial_value,
+            script::ScriptBindingContext::ForMaterial(node.as_ptr(),
+                                                      material.get(),
+                                                      script_template.property.as_str(),
+                                                      rstd::move(animation)));
+        if (! field_script) continue;
+        scripts.AddActuator({
+            field_script,
+            [&scene,
+             material,
+             uniform_name = rstd::cppstd::to_string(script_template.uniform_name.as_str())](
+                const script::ScriptValue& script_value) {
+                auto value = ScriptValueAsShaderValue(script_value);
+                if (value.is_none()) return;
+                (void)scene.SetMaterialShaderValue(
+                    *material, rstd::cppstd::as_str(uniform_name).unwrap(), *value);
+            },
+        });
+    }
+}
+
 void ResolveRegisteredAsset(SceneParseContext& context, ref<str> asset) {
     if (AssetEndsWith(asset, ".json"_str) && asset.starts_with("models/"_str)) {
         if (context.dynamic_image_prototypes.contains_key(asset)) return;
@@ -116,17 +172,22 @@ void ResolveRegisteredAsset(SceneParseContext& context, ref<str> asset) {
         wpscene::ImageObject image;
         image.id = context.NextSyntheticObjectId();
         if (! image.FromAsset(asset, *size, *context.vfs, context.pkg_version)) return;
+        const bool was_capturing_templates        = context.capture_material_script_templates;
+        context.capture_material_script_templates = true;
         ParseImageObj(context, image);
-        auto parsed = context.node_id_map.get(image.id);
+        context.capture_material_script_templates = was_capturing_templates;
+        auto parsed                               = context.node_id_map.get(image.id);
         if (parsed.is_none() || (**parsed).node.is_none()) return;
         auto node   = (*(**parsed).node).clone();
         node->ID()  = i32(-1);
         auto config = FindUniformConfig(context, *node);
         if (config == nullptr) return;
         node->SetVisible(false);
+        auto material_scripts = TakeMaterialScriptTemplates(context, node);
         (void)context.dynamic_image_prototypes.insert(
             String::make(asset),
-            SceneParseContext::DynamicImagePrototype { node.clone(), config->Clone() });
+            SceneParseContext::DynamicImagePrototype {
+                node.clone(), config->Clone(), rstd::move(material_scripts) });
         (void)context.node_id_map.remove(image.id);
     } else if (AssetEndsWith(asset, ".mdl"_str)) {
         if (context.dynamic_model_prototypes.contains_key(asset)) return;
@@ -184,7 +245,11 @@ Option<Arc<SceneNode>> InstantiateResolvedAsset(SceneParseContext& context, Scen
             context,
             node,
             (**prototype).uniform_config.CloneForRuntimeLayer(context.NextSyntheticObjectId()));
-        return attach(rstd::move(node));
+        auto attached = attach(node.clone());
+        if (context.script_scene.is_some())
+            InstantiateDynamicMaterialScripts(
+                **context.script_scene, *context.scene, **prototype, node);
+        return attached;
     } else if (AssetEndsWith(asset, ".mdl"_str)) {
         auto prototype = context.dynamic_model_prototypes.get(asset);
         if (prototype.is_none()) return None();

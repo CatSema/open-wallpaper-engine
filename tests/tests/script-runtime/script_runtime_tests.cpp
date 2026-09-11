@@ -2116,6 +2116,57 @@ TEST(ScriptScene, CreateLayerRoutesConfigurationAndLayerCloneToFactory) {
     EXPECT_DOUBLE_EQ(LastScalar(fs), 2.0);
 }
 
+TEST(ScriptScene, CreateLayerRestoresTheCallingFieldScriptBinding) {
+    auto root  = Arc<owe::SceneNode>::make();
+    auto owner = Arc<owe::SceneNode>::make(Eigen::Vector3f { 344.0f, 328.0f, 0.0f },
+                                           Eigen::Vector3f::Ones(),
+                                           Eigen::Vector3f::Zero(),
+                                           "owner");
+    root->AppendChild(owner.clone());
+
+    Vec<Arc<owe::SceneNode>> created;
+    JsRuntime                rt;
+    rt.SetLayerFactory(JsRuntime::LayerFactory::make(
+        [&root, &created, &rt](owe::SceneNode*,
+                               LayerAssetReference) -> Option<Arc<owe::SceneNode>> {
+            auto node = Arc<owe::SceneNode>::make();
+            root->AppendChild(node.clone());
+            created.push(node.clone());
+            auto* nested = rt.MakeFieldScript(R"JS(export function init() {})JS",
+                                              "test/create_layer_nested_binding",
+                                              FieldKind::Scalar,
+                                              owe::MakeObject(),
+                                              owe::IntoJson(0),
+                                              node.as_ptr());
+            EXPECT_NE(nested, nullptr);
+            return Some(rstd::move(node));
+        }));
+    auto* script = rt.MakeFieldScript(
+        R"JS(
+            let created = false;
+            export function update() {
+                if (!created) {
+                    thisScene.createLayer('models/bar.json');
+                    created = true;
+                }
+                return thisLayer.origin.x;
+            }
+        )JS",
+        "test/create_layer_restores_binding",
+        FieldKind::Scalar,
+        owe::MakeObject(),
+        owe::IntoJson(0),
+        owner.as_ptr());
+    ASSERT_NE(script, nullptr);
+
+    rt.SetSceneRoot(root.as_ptr());
+    rt.TickAll();
+    rt.ClearLayerFactory();
+
+    ASSERT_EQ(created.len(), usize(1));
+    EXPECT_DOUBLE_EQ(LastScalar(script), 344.0);
+}
+
 TEST(ScriptScene, CreatedLayersCanBeSortedBeforeAnExistingLayer) {
     owe::Scene scene;
     auto       ring = Arc<owe::SceneNode>::make(

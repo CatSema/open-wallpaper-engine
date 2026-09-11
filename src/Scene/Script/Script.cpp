@@ -517,6 +517,38 @@ struct EngineHostState {
     owe::SceneNode*                              scene_root { nullptr };
 };
 
+class EngineBindingGuard : NoCopy, NoMove {
+public:
+    EngineBindingGuard(JSContext* context, EngineHostState& state)
+        : ctx(context), host(state), active_field_script(state.active_field_script) {
+        global      = JS_GetGlobalObject(ctx);
+        this_layer  = JS_GetPropertyStr(ctx, global, "thisLayer");
+        this_object = JS_GetPropertyStr(ctx, global, "thisObject");
+        this_scene  = JS_GetPropertyStr(ctx, global, "thisScene");
+        if (state.active_animation.is_some())
+            active_animation = Some((*state.active_animation).clone());
+    }
+
+    ~EngineBindingGuard() {
+        JS_SetPropertyStr(ctx, global, "thisLayer", this_layer);
+        JS_SetPropertyStr(ctx, global, "thisObject", this_object);
+        JS_SetPropertyStr(ctx, global, "thisScene", this_scene);
+        JS_FreeValue(ctx, global);
+        host.active_field_script = active_field_script;
+        host.active_animation    = rstd::move(active_animation);
+    }
+
+private:
+    JSContext*                               ctx { nullptr };
+    EngineHostState&                         host;
+    FieldScript*                             active_field_script { nullptr };
+    Option<Arc<owe::SceneAnimationPlayback>> active_animation;
+    JSValue                                  global { JS_UNDEFINED };
+    JSValue                                  this_layer { JS_UNDEFINED };
+    JSValue                                  this_object { JS_UNDEFINED };
+    JSValue                                  this_scene { JS_UNDEFINED };
+};
+
 uint32_t NormalizeAudioResolution(int32_t requested) {
     if (requested <= 16) return 16;
     if (requested <= 32) return 32;
@@ -2685,6 +2717,8 @@ JSValue NodeSceneCreateLayer(JSContext* ctx, JSValueConst /*this_val*/, int argc
     auto* host = static_cast<EngineHostState*>(JS_GetContextOpaque(ctx));
     auto* fs   = host->active_field_script;
     if (! fs) return JS_ThrowReferenceError(ctx, "createLayer requires an active field script");
+    // A factory may initialize nested field scripts and replace the caller's JS globals.
+    EngineBindingGuard binding_guard(ctx, *host);
 
     owe::SceneNode* node = nullptr;
     if (argc > 0 && ! JS_IsObject(argv[0])) {
@@ -3655,6 +3689,7 @@ void JsRuntime::SetSceneRoot(owe::SceneNode* root) {
 void JsRuntime::TickAll(slice<owe::SceneAnimationEventDispatch> animation_events) {
     JSContext* ctx = m_impl->ctx;
     SweepDeferred(ctx, &m_impl->host);
+    const auto script_count = usize(m_impl->scripts.size());
 
     // Cursor event dispatch. For every script bound to a SceneNode, hit-
     // test the cursor against the node's world AABB and fire any of
@@ -3671,8 +3706,9 @@ void JsRuntime::TickAll(slice<owe::SceneAnimationEventDispatch> animation_events
         ev_shared = MakeCursorEvent(ctx, cursor, button);
         return ev_shared;
     };
-    for (auto& fs : m_impl->scripts) {
-        auto* I = fs->m_impl.get();
+    for (usize script_index {}; script_index < script_count; ++script_index) {
+        auto& fs = m_impl->scripts[script_index.to_primitive()];
+        auto* I  = fs->m_impl.get();
         if (! I->alive || ! I->node) continue;
         const bool now_inside = in_window && HitTestNode(I->node, cursor);
         BindFieldScriptContext(ctx, *I, m_impl->host.default_layer);
@@ -3713,8 +3749,9 @@ void JsRuntime::TickAll(slice<owe::SceneAnimationEventDispatch> animation_events
 
     for (const auto& dispatch : animation_events) {
         if (dispatch.node == nullptr) continue;
-        for (auto& fs : m_impl->scripts) {
-            auto* I = fs->m_impl.get();
+        for (usize script_index {}; script_index < script_count; ++script_index) {
+            auto& fs = m_impl->scripts[script_index.to_primitive()];
+            auto* I  = fs->m_impl.get();
             if (! I->alive || I->node != dispatch.node || JS_IsUndefined(I->animation_event_fn))
                 continue;
             BindFieldScriptContext(ctx, *I, m_impl->host.default_layer);
@@ -3743,8 +3780,9 @@ void JsRuntime::TickAll(slice<owe::SceneAnimationEventDispatch> animation_events
     }
     m_impl->host.active_field_script = nullptr;
 
-    for (auto& fs : m_impl->scripts) {
-        auto* I = fs->m_impl.get();
+    for (usize script_index {}; script_index < script_count; ++script_index) {
+        auto& fs = m_impl->scripts[script_index.to_primitive()];
+        auto* I  = fs->m_impl.get();
         if (! I->alive) continue;
         if (JS_IsUndefined(I->update_fn)) continue;
         // Swap `thisLayer` to this script's bound node before update. When

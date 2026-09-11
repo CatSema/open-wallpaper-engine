@@ -220,6 +220,7 @@ void FinalizeUniformSources(SceneParseContext& context) {
         ! context.dynamic_particle_prototypes.is_empty()) {
         auto scripts = scene.ExtensionMut<script::ScriptScene>();
         if (scripts.is_some()) {
+            auto* script_scene        = rstd::addressof(**scripts);
             auto* runtime             = rstd::addressof((**scripts).runtime());
             auto  image_prototypes    = rstd::move(context.dynamic_image_prototypes);
             auto  particle_prototypes = rstd::move(context.dynamic_particle_prototypes);
@@ -229,6 +230,7 @@ void FinalizeUniformSources(SceneParseContext& context) {
             auto  scene_ptr           = rstd::addressof(scene);
             (**scripts).runtime().SetLayerFactory(script::JsRuntime::LayerFactory::make(
                 [scene_ptr,
+                 script_scene,
                  runtime,
                  image_prototypes          = rstd::move(image_prototypes),
                  particle_prototypes       = rstd::move(particle_prototypes),
@@ -270,6 +272,8 @@ void FinalizeUniformSources(SceneParseContext& context) {
                                            asset);
                                 return None();
                             }
+                            InstantiateDynamicMaterialScripts(
+                                *script_scene, *scene_ptr, **prototype, node);
                             return Some(rstd::move(node));
                         }
 

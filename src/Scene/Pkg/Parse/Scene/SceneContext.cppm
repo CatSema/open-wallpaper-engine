@@ -179,13 +179,26 @@ struct SceneParseContext {
     i32                             next_synthetic_object_id { -1 };
     Vec<owe::script::FieldScript*>  registered_asset_scripts;
     HashMap<String, Arc<SceneNode>> dynamic_model_prototypes;
-    struct DynamicImagePrototype {
-        Arc<SceneNode>         node;
-        UniformNodeConfigDraft uniform_config;
+    bool                            capture_material_script_templates { false };
+    struct MaterialFieldScriptTemplate {
+        u32               material_slot { 0 };
+        String            source;
+        String            sha;
+        script::FieldKind kind { script::FieldKind::Unknown };
+        Json              properties;
+        Json              initial_value;
+        String            property;
+        String            uniform_name;
     };
-    HashMap<String, DynamicImagePrototype>   dynamic_image_prototypes;
-    HashMap<String, wpscene::ParticleObject> dynamic_particle_prototypes;
-    wavsen::audio::SoundManager*             sound_manager { nullptr };
+    struct DynamicImagePrototype {
+        Arc<SceneNode>                   node;
+        UniformNodeConfigDraft           uniform_config;
+        Vec<MaterialFieldScriptTemplate> material_scripts;
+    };
+    HashMap<const SceneMaterial*, Vec<MaterialFieldScriptTemplate>> material_script_templates;
+    HashMap<String, DynamicImagePrototype>                          dynamic_image_prototypes;
+    HashMap<String, wpscene::ParticleObject>                        dynamic_particle_prototypes;
+    wavsen::audio::SoundManager*                                    sound_manager { nullptr };
 
     HashMap<i32, String> system_media_image_fallbacks;
     HashSet<i32>         linked_source_ids;
@@ -235,6 +248,7 @@ void WireCameraFieldScripts(SceneParseContext&, const Arc<SceneNode>&, const Arc
 void WireMaterialShaderValueScripts(SceneParseContext&, const Arc<SceneNode>&,
                                     const std::shared_ptr<SceneMaterial>&, const wpscene::Material&,
                                     const ShaderInfo&);
+auto ScriptValueAsShaderValue(const script::ScriptValue&) -> Option<ShaderValue>;
 auto UsesUnitFinalQuad(const wpscene::Material&) -> bool;
 auto HasSolidCompositeContext(const SceneParseContext&, const wpscene::ImageObject&) -> bool;
 auto CanCompositeFinalEffectMaterial(std::string_view, const ShaderInfo&, bool) -> bool;
@@ -265,6 +279,9 @@ struct ParticleObjectParseOutput {
 auto BuildParticleObject(ParticleObjectParseServices&, wpscene::ParticleObject&)
     -> ParticleObjectParseOutput;
 auto CloneRegisteredNode(Scene&, ref<SceneNode>, ref<str>) -> Arc<SceneNode>;
+void InstantiateDynamicMaterialScripts(script::ScriptScene&, Scene&,
+                                       const SceneParseContext::DynamicImagePrototype&,
+                                       const Arc<SceneNode>&);
 auto WorkshopAssetPath(const script::LayerAssetReference&) -> Option<String>;
 auto InstantiateRegisteredAsset(SceneParseContext&, SceneNode*, const script::LayerAssetReference&)
     -> Option<Arc<SceneNode>>;

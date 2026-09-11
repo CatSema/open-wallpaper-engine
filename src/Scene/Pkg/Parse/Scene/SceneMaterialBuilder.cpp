@@ -1044,6 +1044,20 @@ void WireMaterialShaderValueScripts(SceneParseContext& context, const Arc<SceneN
         if (! field_script) continue;
         SetScriptInitializationOrder(context, *field_script, owner.as_ptr());
         TrackRegisteredAssets(context, field_script);
+        if (context.capture_material_script_templates) {
+            if (! context.material_script_templates.contains_key(material.get()))
+                (void)context.material_script_templates.insert(material.get(), {});
+            auto templates = context.material_script_templates.get_mut(material.get()).unwrap();
+            templates->push(SceneParseContext::MaterialFieldScriptTemplate {
+                .source        = String::make(rstd::cppstd::as_str(binding.source).unwrap()),
+                .sha           = String::make(rstd::cppstd::as_str(sha).unwrap()),
+                .kind          = kind,
+                .properties    = field_binding.ScriptProperties().clone(),
+                .initial_value = binding.initial_value.clone(),
+                .property      = field_binding.field.clone(),
+                .uniform_name  = String::make(rstd::cppstd::as_str(uniform_name).unwrap()),
+            });
+        }
         auto* scene = context.scene.get();
         scripts.AddActuator({
             field_script,
