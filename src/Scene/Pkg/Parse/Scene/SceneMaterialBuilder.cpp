@@ -49,16 +49,15 @@ BlendMode ParseBlendMode(std::string_view str) {
     return bm;
 }
 
-Option<BlendMode> ApplyImageColorBlend(wpscene::Material&          material,
-                                       const wpscene::ImageObject& image) {
-    if (image.colorBlendMode == i32()) return None<BlendMode>();
+Option<BlendMode> ApplyLayerColorBlend(wpscene::Material& material, i32 color_blend_mode) {
+    if (color_blend_mode == i32()) return None<BlendMode>();
 
-    if (image.colorBlendMode == i32(31)) {
+    if (color_blend_mode == i32(31)) {
         material.combos.erase(rstd::cppstd::to_string(WE_CB_BLENDMODE));
         material.blending = "additive";
         return Some(BlendMode::Additive);
     }
-    material.combos[rstd::cppstd::to_string(WE_CB_BLENDMODE)] = image.colorBlendMode;
+    material.combos[rstd::cppstd::to_string(WE_CB_BLENDMODE)] = color_blend_mode;
     return None<BlendMode>();
 }
 

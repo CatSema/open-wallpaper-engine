@@ -131,7 +131,7 @@ void ParseImageObjImpl(SceneParseContext& context, wpscene::ImageObject& img_obj
         }
         colorMat.FromJson(*json);
         colorMat.combos[rstd::cppstd::to_string(WE_CB_BONECOUNT)] = i32(1);
-        color_blend_attachment_override = ApplyImageColorBlend(colorMat, wpimgobj);
+        color_blend_attachment_override = ApplyLayerColorBlend(colorMat, wpimgobj.colorBlendMode);
         colorEffect.materials.push_back(std::move(colorMat));
         wpimgobj.effects.push_back(std::move(colorEffect));
     }
@@ -217,7 +217,8 @@ void ParseImageObjImpl(SceneParseContext& context, wpscene::ImageObject& img_obj
         i32(wpimgobj.perspective ? 0 : 1);
     image_wpmat.combos[rstd::cppstd::to_string(OWE_CB_IMAGE_LAYER)] = i32(1);
     wpscene::Material image_user_texture_fallback                   = image_wpmat.clone();
-    if (color_blend_uses_layer_material && ! hasEffect) ApplyImageColorBlend(image_wpmat, wpimgobj);
+    if (color_blend_uses_layer_material && ! hasEffect)
+        ApplyLayerColorBlend(image_wpmat, wpimgobj.colorBlendMode);
     ApplyUserTextureBindings(context, image_wpmat);
     {
         svData.SetParallaxContract(wpimgobj.parallax, wpimgobj.id, ! wpimgobj.disablepropagation);
@@ -341,7 +342,8 @@ void ParseImageObjImpl(SceneParseContext& context, wpscene::ImageObject& img_obj
                 puppet_mat.textures[0]          = "";
                 MdlParser::AddPuppetMatInfo(puppet_mat, **puppet);
                 if (color_blend_uses_layer_material)
-                    color_blend_attachment_override = ApplyImageColorBlend(puppet_mat, wpimgobj);
+                    color_blend_attachment_override =
+                        ApplyLayerColorBlend(puppet_mat, wpimgobj.colorBlendMode);
                 puppet_effect.materials.push_back(std::move(puppet_mat));
                 wpimgobj.effects.push_back(std::move(puppet_effect));
             }

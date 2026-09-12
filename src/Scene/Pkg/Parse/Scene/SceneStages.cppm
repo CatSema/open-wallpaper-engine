@@ -63,6 +63,7 @@ enum class TextRenderMode
 };
 
 struct TextSurfaceRequirements {
+    bool color_blend { false };
     bool has_effect { false };
     bool copy_background { false };
     bool opaque_background { false };
@@ -70,7 +71,7 @@ struct TextSurfaceRequirements {
 };
 
 constexpr auto ResolveTextRenderMode(TextSurfaceRequirements requirements) -> TextRenderMode {
-    return requirements.has_effect || requirements.copy_background ||
+    return requirements.color_blend || requirements.has_effect || requirements.copy_background ||
                    requirements.opaque_background || requirements.linked_source
                ? TextRenderMode::Offscreen
                : TextRenderMode::Direct;

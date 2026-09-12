@@ -217,6 +217,7 @@ void ParseTextObjImpl(SceneParseContext& context, wpscene::TextObject& obj) {
     }
     const bool linked_source        = context.IsLinkedSource(obj.id);
     const auto text_render_mode     = ResolveTextRenderMode(TextSurfaceRequirements {
+        .color_blend       = obj.colorBlendMode != i32(),
         .has_effect        = has_text_effect,
         .copy_background   = obj.copybackground,
         .opaque_background = obj.opaquebackground,
@@ -647,7 +648,9 @@ void ParseTextObjImpl(SceneParseContext& context, wpscene::TextObject& obj) {
             UniformNodeConfigDraft sv;
             ShaderInfo             shader_info;
         };
-        auto load_passthrough_material = [&](std::string_view input) -> Option<LoadedTextMaterial> {
+        auto load_passthrough_material = [&](std::string_view input,
+                                             bool             final_composite =
+                                                 false) -> Option<LoadedTextMaterial> {
             auto pt_json =
                 LoadJsonFile(*context.vfs, "/assets/materials/util/effectpassthrough.json");
             if (! pt_json) {
@@ -664,6 +667,8 @@ void ParseTextObjImpl(SceneParseContext& context, wpscene::TextObject& obj) {
             else
                 pt_mat.textures[0] = std::string(input);
 
+            auto attachment_override =
+                ApplyLayerColorBlend(pt_mat, final_composite ? obj.colorBlendMode : i32());
             SceneMaterial          mat;
             UniformNodeConfigDraft sv;
             ShaderInfo             si;
@@ -682,7 +687,7 @@ void ParseTextObjImpl(SceneParseContext& context, wpscene::TextObject& obj) {
             mat                 = rstd::move(material_build.material);
             si                  = rstd::move(material_build.shader_info);
             LoadConstvalue(context, mat, pt_mat, si);
-            mat.blenmode = BlendMode::Translucent;
+            mat.blenmode = attachment_override.unwrap_or(BlendMode::Translucent);
             return Some(LoadedTextMaterial {
                 .source      = std::move(pt_mat),
                 .material    = std::move(mat),
@@ -912,7 +917,7 @@ void ParseTextObjImpl(SceneParseContext& context, wpscene::TextObject& obj) {
         GenCardMesh(*compose_mesh,
                     { rstd::as_cast<float>(runtime_targets->layer_w),
                       rstd::as_cast<float>(runtime_targets->layer_h) });
-        auto loaded = load_passthrough_material(has_text_effect ? effect_final : composite);
+        auto loaded = load_passthrough_material(has_text_effect ? effect_final : composite, true);
         if (loaded.is_none()) return;
         compose_sv = std::move(loaded->sv);
         compose_sv.SetParallaxContract(obj.parallax, obj.id);

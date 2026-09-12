@@ -124,6 +124,7 @@ TEST(TextObjectJson, ReadsReflectionParticipation) {
 
 TEST(TextRenderMode, UsesDirectRenderingOnlyWithoutIndependentSurfaceRequirements) {
     EXPECT_EQ(owe::ResolveTextRenderMode({}), owe::TextRenderMode::Direct);
+    EXPECT_EQ(owe::ResolveTextRenderMode({ .color_blend = true }), owe::TextRenderMode::Offscreen);
     EXPECT_EQ(owe::ResolveTextRenderMode({ .has_effect = true }), owe::TextRenderMode::Offscreen);
     EXPECT_EQ(owe::ResolveTextRenderMode({ .copy_background = true }),
               owe::TextRenderMode::Offscreen);
@@ -322,6 +323,55 @@ TEST(SceneObjectExpansion, ShapeOwnsItsWallpaperLayerIdentity) {
     ASSERT_NE(shape, nullptr);
     ASSERT_TRUE(shape->WallpaperIdentity().is_some());
     EXPECT_EQ(shape->WallpaperIdentity()->value, rstd::i32(42));
+}
+
+TEST(TextColorBlendParsing, PreservesOverlayAdditiveAndDirectModes) {
+    auto document = owe::wpscene::ParseSceneDocumentJson(
+        R"JSON({
+            "camera": {},
+            "general": {"orthogonalprojection": {"width": 1920, "height": 1080}},
+            "objects": [
+                {"id": 11, "name": "Overlay", "text": "12:34",
+                 "font": "systemfont_DejaVu Sans", "pointsize": 96, "colorBlendMode": 11},
+                {"id": 31, "name": "Additive", "text": "12:34",
+                 "font": "systemfont_DejaVu Sans", "pointsize": 96, "colorBlendMode": 31},
+                {"id": 1, "name": "Direct", "text": "12:34",
+                 "font": "systemfont_DejaVu Sans", "pointsize": 96}
+            ]
+        })JSON",
+        owe::wpscene::kSceneVersionUnknown);
+    ASSERT_TRUE(document.is_some());
+    auto assets = owe::fs::make_physical_fs(owe::fs::ToPath(WAYWALLEN_ASSETS_DIR));
+    ASSERT_TRUE(assets.is_ok());
+    owe::fs::VFS vfs;
+    ASSERT_TRUE(vfs.mount("/assets"_str, std::move(assets).unwrap_unchecked()).is_ok());
+    wavsen::audio::SoundManager sound_manager;
+    owe::SceneParser            parser;
+    auto                        parsed = parser.Parse(
+        "text-color-blend"_str,
+        rstd::ref<owe::wpscene::SceneDocument>::from_raw_parts(rstd::addressof(*document)),
+        rstd::mut_ref<owe::fs::VFS>::from_raw_parts(rstd::addressof(vfs)),
+        rstd::mut_ref<wavsen::audio::SoundManager>::from_raw_parts(rstd::addressof(sound_manager)));
+    ASSERT_TRUE(parsed.is_ok());
+    auto scene   = rstd::move(parsed).unwrap();
+    auto overlay = scene.scene->RootMut()->FindByName("Overlay");
+    ASSERT_NE(overlay, nullptr);
+    ASSERT_NE(overlay->Mesh(), nullptr);
+    auto* material = overlay->Mesh()->Material();
+    ASSERT_NE(material, nullptr);
+    ASSERT_TRUE(material->customShader.variant.is_some());
+    EXPECT_EQ(material->customShader.variant->input_combos.at("BLENDMODE"), "11");
+    EXPECT_EQ(material->blenmode, owe::BlendMode::Translucent);
+    auto additive = scene.scene->RootMut()->FindByName("Additive");
+    ASSERT_NE(additive, nullptr);
+    ASSERT_NE(additive->Mesh(), nullptr);
+    ASSERT_NE(additive->Mesh()->Material(), nullptr);
+    EXPECT_EQ(additive->Mesh()->Material()->blenmode, owe::BlendMode::Additive);
+    auto direct = scene.scene->RootMut()->FindByName("Direct");
+    ASSERT_NE(direct, nullptr);
+    ASSERT_NE(direct->Mesh(), nullptr);
+    ASSERT_NE(direct->Mesh()->Material(), nullptr);
+    EXPECT_EQ(direct->Mesh()->Material()->name, "text");
 }
 
 TEST(ImageColorBlendParsing, LinearDodgeUsesAdditiveAttachmentOwner) {
