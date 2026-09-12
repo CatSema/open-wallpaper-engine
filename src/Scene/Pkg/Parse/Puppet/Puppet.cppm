@@ -111,6 +111,8 @@ public:
         uint32_t       bone_index { 0 };
         int32_t        unk { 0 }; // hexpat BoneTrack.unk
         Vec<BoneFrame> frames;
+
+        bool HasTransformSamples() const { return (unk & 1) == 0 && ! frames.is_empty(); }
     };
 
     // MDLA >= 3 animation payload. Scalar main/tail tracks contain the texture-channel
@@ -242,18 +244,12 @@ public:
     bool world_anchored_bones { false };
     bool additive_uses_first_frame { false };
 
-    slice<Eigen::Affine3f>  genFrame(PuppetLayer&, double time) noexcept;
     void                    prepared();
     Option<usize>           attachmentIndex(ref<str> name) const noexcept;
     Option<Eigen::Affine3f> attachmentBindTransform(usize index) const noexcept;
-
-private:
-    Vec<Eigen::Affine3f> m_final_affines;
 };
 
 class PuppetLayer {
-    friend class Puppet;
-
 public:
     explicit PuppetLayer(Arc<Puppet>);
     ~PuppetLayer();
@@ -278,6 +274,7 @@ public:
 
     void prepared(slice<AnimationLayer>);
 
+    // Borrowed until this instance is evaluated, prepared, or destroyed again.
     slice<Eigen::Affine3f>  genFrame(double time) noexcept;
     uint32_t                boneIndex(ref<str> name) const noexcept;
     Option<Eigen::Affine3f> boneTransform(uint32_t index, double time) noexcept;
@@ -299,8 +296,10 @@ private:
         AnimationLayer                       anim_layer;
         const Puppet::Animation*             anim { nullptr };
         Option<Arc<SceneAnimationPlayback>>  playback;
-        bool                                 draw_order_additive { false };
+        bool                                 legacy_absolute_base { false };
         Puppet::Animation::InterpolationInfo interp_info {};
+
+        bool IsAdditiveTransform() const { return anim_layer.additive && ! legacy_absolute_base; }
 
         operator bool() const noexcept { return anim != nullptr; };
     };
@@ -308,6 +307,7 @@ private:
     Vec<Layer>                       m_layers;
     Vec<Arc<SceneAnimationPlayback>> m_playbacks;
     Vec<float>                       m_texture_channel_blend_map;
+    Vec<Eigen::Affine3f>             m_final_affines;
     Arc<Puppet>                      m_puppet;
 };
 

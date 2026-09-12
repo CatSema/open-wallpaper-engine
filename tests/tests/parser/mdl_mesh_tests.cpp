@@ -39,6 +39,144 @@ std::uint32_t CountUvSeamTriangles(const owe::Mdl::Mesh& mesh) {
 
 } // namespace
 
+static auto MakeReplacementPuppet() -> Arc<owe::Puppet> {
+    auto  puppet                      = Arc<owe::Puppet>::make();
+    auto& bone                        = puppet->bones.emplace_back();
+    bone.local_bind.translation().x() = 100.0f;
+    auto& reference             = bone.animation_reference.insert(Eigen::Affine3f::Identity());
+    reference.translation().x() = 4.0f;
+    for (int id : { 1, 2 }) {
+        auto& animation  = puppet->anims.emplace_back();
+        animation.id     = id;
+        animation.fps    = 1.0;
+        animation.length = 1;
+        animation.mode   = owe::Puppet::PlayMode::Single;
+        auto& track      = animation.bone_tracks.emplace_back();
+        for (int frame : { 0, 1 }) {
+            track.frames.push(owe::Puppet::BoneFrame {
+                .position =
+                    Eigen::Vector3f(static_cast<float>(id * 20 - 10 + frame * 10), 0.0f, 0.0f),
+                .angle = Eigen::Vector3f::Zero(),
+                .scale = Eigen::Vector3f::Ones(),
+            });
+        }
+    }
+    puppet->prepared();
+    return puppet;
+}
+
+TEST(Puppet, ReplacementLayersBlendSequentiallyFromReference) {
+    auto puppet = MakeReplacementPuppet();
+    for (bool reverse : { false, true }) {
+        owe::PuppetLayer                 layer(puppet.clone());
+        owe::PuppetLayer::AnimationLayer authored[] = {
+            { .id = reverse ? 2 : 1, .blend = reverse ? 0.25 : 0.5 },
+            { .id = reverse ? 1 : 2, .blend = reverse ? 0.5 : 0.25 },
+        };
+        layer.prepared(slice<owe::PuppetLayer::AnimationLayer>::from_raw_parts(authored, usize(2)));
+        for (const auto& playback : layer.AnimationPlaybacks()) {
+            playback->SetFrame(i32(1));
+            playback->Pause();
+        }
+        EXPECT_FLOAT_EQ(layer.boneTransform(1, 0.0)->translation().x(), reverse ? 16.5f : 19.0f);
+        EXPECT_FLOAT_EQ(layer.boneTransform(1, 100.0)->translation().x(), reverse ? 16.5f : 19.0f);
+    }
+}
+
+TEST(Puppet, FirstLayerWeightAndVisibilityDoNotSelectAnAbsoluteAnchor) {
+    auto puppet = MakeReplacementPuppet();
+    for (bool additive : { false, true }) {
+        for (bool visible : { false, true }) {
+            for (double weight : { 0.0, 0.5, 1.0 }) {
+                owe::PuppetLayer                 layer(puppet.clone());
+                owe::PuppetLayer::AnimationLayer authored {
+                    .id       = 1,
+                    .blend    = weight,
+                    .visible  = visible,
+                    .additive = additive,
+                };
+                layer.prepared(
+                    slice<owe::PuppetLayer::AnimationLayer>::from_raw_parts(&authored, usize(1)));
+                EXPECT_FLOAT_EQ(layer.boneTransform(1, 0.0)->translation().x(),
+                                visible ? 4.0f + 6.0f * static_cast<float>(weight) : 4.0f);
+            }
+        }
+    }
+}
+
+TEST(Puppet, TransformFlagsPreserveMaskedTracksAndAcceptZeroPoses) {
+    for (int flag : { 0, 1, 2, 3 }) {
+        auto  puppet = MakeReplacementPuppet();
+        auto& track  = puppet->anims[usize()].bone_tracks[usize()];
+        track.unk    = flag;
+        for (auto& frame : track.frames) frame.position.setZero();
+        puppet->prepared();
+        owe::PuppetLayer                 layer(puppet.clone());
+        owe::PuppetLayer::AnimationLayer authored { .id = 1 };
+        layer.prepared(
+            slice<owe::PuppetLayer::AnimationLayer>::from_raw_parts(&authored, usize(1)));
+        EXPECT_FLOAT_EQ(layer.boneTransform(1, 0.0)->translation().x(), (flag & 1) ? 4.0f : 0.0f);
+    }
+    auto puppet = MakeReplacementPuppet();
+    puppet->anims[usize()].bone_tracks[usize()].frames.clear();
+    owe::PuppetLayer                 layer(puppet.clone());
+    owe::PuppetLayer::AnimationLayer authored { .id = 1 };
+    layer.prepared(slice<owe::PuppetLayer::AnimationLayer>::from_raw_parts(&authored, usize(1)));
+    EXPECT_FLOAT_EQ(layer.boneTransform(1, 0.0)->translation().x(), 4.0f);
+}
+
+TEST(Puppet, MixedLayersAndMaskedReplacementPreserveCurrentPose) {
+    for (bool reverse : { false, true }) {
+        auto                             puppet = MakeReplacementPuppet();
+        owe::PuppetLayer                 layer(puppet.clone());
+        owe::PuppetLayer::AnimationLayer authored[] = {
+            { .id = reverse ? 2 : 1, .blend = reverse ? 0.5 : 1.0, .additive = reverse },
+            { .id = reverse ? 1 : 2, .blend = reverse ? 1.0 : 0.5, .additive = ! reverse },
+        };
+        layer.prepared(slice<owe::PuppetLayer::AnimationLayer>::from_raw_parts(authored, usize(2)));
+        EXPECT_FLOAT_EQ(layer.boneTransform(1, 0.0)->translation().x(), reverse ? 10.0f : 23.0f);
+    }
+    auto puppet                                      = MakeReplacementPuppet();
+    puppet->anims[usize(1)].bone_tracks[usize()].unk = 1;
+    owe::PuppetLayer                 layer(puppet.clone());
+    owe::PuppetLayer::AnimationLayer authored[] = { { .id = 1 }, { .id = 2 } };
+    layer.prepared(slice<owe::PuppetLayer::AnimationLayer>::from_raw_parts(authored, usize(2)));
+    EXPECT_FLOAT_EQ(layer.boneTransform(1, 0.0)->translation().x(), 10.0f);
+}
+
+TEST(Puppet, PartialReplacementInterpolatesRotationAndScaleFromReference) {
+    auto  puppet    = MakeReplacementPuppet();
+    auto& reference = *puppet->bones[usize()].animation_reference;
+    reference.rotate(Eigen::AngleAxisf(0.4f, Eigen::Vector3f::UnitZ()));
+    reference.scale(Eigen::Vector3f(2.0f, 3.0f, 1.0f));
+    auto& track                      = puppet->anims[usize()].bone_tracks[usize()];
+    track.frames[usize()].angle.x()  = -1.6f;
+    track.frames[usize(1)].angle.x() = 1.2f;
+    for (auto& frame : track.frames) frame.scale = Eigen::Vector3f(4.0f, 1.0f, 2.0f);
+    puppet->prepared();
+    owe::PuppetLayer                 layer(puppet.clone());
+    owe::PuppetLayer::AnimationLayer authored { .id = 1, .blend = 0.25 };
+    layer.prepared(slice<owe::PuppetLayer::AnimationLayer>::from_raw_parts(&authored, usize(1)));
+    Vec<owe::SceneAnimationEvent> events;
+    auto                          playback = layer.AnimationPlaybacks()[usize()].clone();
+    playback->Advance(0.0, events);
+    playback->Advance(0.25, events);
+    playback->Pause();
+    Eigen::Quaterniond sample;
+    sample.coeffs() = (0.75 * track.frames[usize()].quaternion.coeffs() +
+                       0.25 * track.frames[usize(1)].quaternion.coeffs())
+                          .normalized();
+    const Eigen::Quaterniond reference_rotation(Eigen::AngleAxisd(0.4, Eigen::Vector3d::UnitZ()));
+    Eigen::Quaterniond       expected_rotation;
+    expected_rotation.coeffs() =
+        (0.75 * reference_rotation.coeffs() + 0.25 * sample.coeffs()).normalized();
+    Eigen::Affine3f expected = Eigen::Affine3f::Identity();
+    expected.translate(Eigen::Vector3f(6.125f, 0.0f, 0.0f));
+    expected.rotate(expected_rotation.cast<float>());
+    expected.scale(Eigen::Vector3f(2.5f, 2.5f, 1.25f));
+    EXPECT_TRUE(layer.boneTransform(1, 0.0)->matrix().isApprox(expected.matrix(), 0.0001f));
+}
+
 TEST(Puppet, ArcOwnedLayerExposesBorrowedTransforms) {
     auto              puppet = Arc<owe::Puppet>::make();
     owe::Puppet::Bone bone;
@@ -92,6 +230,57 @@ TEST(Puppet, SamplesTextureChannelBlendMapFromAnimationPlayback) {
     EXPECT_FLOAT_EQ(blend_map[usize(1)], 0.5f);
     EXPECT_FLOAT_EQ(blend_map[usize(2)], 0.0f);
     EXPECT_FLOAT_EQ(blend_map[usize(3)], 0.0f);
+}
+
+TEST(Puppet, SharedModelKeepsInstanceTransformsIndependent) {
+    auto puppet = Arc<owe::Puppet>::make();
+    puppet->bones.emplace_back();
+    auto& child                    = puppet->bones.emplace_back();
+    child.bind_parent              = 0;
+    child.anim_parent              = 0;
+    child.file_parent              = 0;
+    child.local_bind.translation() = Eigen::Vector3f(0.0f, 5.0f, 0.0f);
+    auto& animation                = puppet->anims.emplace_back();
+    animation.id                   = 1;
+    animation.fps                  = 1.0;
+    animation.length               = 1;
+    animation.mode                 = owe::Puppet::PlayMode::Single;
+    auto& track                    = animation.bone_tracks.emplace_back();
+    for (float x : { 10.0f, 20.0f }) {
+        track.frames.push(owe::Puppet::BoneFrame {
+            .position = Eigen::Vector3f(x, 0.0f, 0.0f),
+            .angle    = Eigen::Vector3f::Zero(),
+            .scale    = Eigen::Vector3f::Ones(),
+        });
+    }
+    puppet->prepared();
+    owe::PuppetLayer                 first(puppet.clone());
+    owe::PuppetLayer                 second(puppet.clone());
+    owe::PuppetLayer::AnimationLayer authored { .id = 1 };
+    auto layers = slice<owe::PuppetLayer::AnimationLayer>::from_raw_parts(&authored, usize(1));
+    first.prepared(layers);
+    second.prepared(layers);
+    first.AnimationPlaybacks()[usize()]->Pause();
+    second.AnimationPlaybacks()[usize()]->Pause();
+    second.AnimationPlaybacks()[usize()]->SetFrame(i32(1));
+    const auto first_frame = first.genFrame(0.0);
+    ASSERT_EQ(first_frame.len(), usize(2));
+    EXPECT_FLOAT_EQ(first_frame[usize()].translation().x(), 10.0f);
+    EXPECT_FLOAT_EQ(first_frame[usize(1)].translation().x(), 10.0f);
+    const auto second_frame = second.genFrame(0.0);
+    EXPECT_FLOAT_EQ(second_frame[usize()].translation().x(), 20.0f);
+    EXPECT_FLOAT_EQ(second_frame[usize(1)].translation().x(), 20.0f);
+    EXPECT_FLOAT_EQ(first_frame[usize()].translation().x(), 10.0f);
+    EXPECT_FLOAT_EQ(first_frame[usize(1)].translation().x(), 10.0f);
+
+    first.AnimationPlaybacks()[usize()]->SetFrame(i32(1));
+    EXPECT_FLOAT_EQ(first.boneTransform(2, 0.0)->translation().y(), 5.0f);
+    first.AnimationPlaybacks()[usize()]->SetFrame(i32(0));
+    EXPECT_FLOAT_EQ(first.genFrame(0.0)[usize(1)].translation().x(), 10.0f);
+    EXPECT_FLOAT_EQ(second_frame[usize(1)].translation().x(), 20.0f);
+    first.prepared(slice<owe::PuppetLayer::AnimationLayer> {});
+    EXPECT_TRUE(first.genFrame(0.0)[usize(1)].matrix().isApprox(Eigen::Matrix4f::Identity()));
+    EXPECT_FLOAT_EQ(second_frame[usize(1)].translation().x(), 20.0f);
 }
 
 TEST(Puppet, AdditiveUsesSeparateAnimationReference) {
@@ -163,6 +352,79 @@ TEST(Puppet, LegacyAdditiveOnlyStackUsesEachClipsFirstFrame) {
     EXPECT_FLOAT_EQ(layer.genFrame(0.0)[usize()].translation().x(), -90.0f);
     layer.AnimationPlaybacks()[usize(1)]->SetFrame(i32(1));
     EXPECT_FLOAT_EQ(layer.genFrame(0.0)[usize()].translation().x(), -88.0f);
+}
+
+TEST(Puppet, ReferenceAdditiveUsesLocalRotationDeltaAndNormalizedLinearBlend) {
+    using Eigen::AngleAxisd;
+    using Eigen::Quaterniond;
+    using Eigen::Vector3d;
+    const Quaterniond reference(AngleAxisd(0.7, Vector3d::UnitX()));
+    const Quaterniond base(AngleAxisd(0.6, Vector3d::UnitZ()));
+    const Quaterniond sample_a =
+        AngleAxisd(1.8, Vector3d::UnitY()) * AngleAxisd(-0.4, Vector3d::UnitX());
+    const Quaterniond sample_b =
+        AngleAxisd(4.4, Vector3d::UnitZ()) * AngleAxisd(1.5, Vector3d::UnitY());
+    ASSERT_LT(sample_a.dot(sample_b), 0.0);
+
+    auto            puppet = Arc<owe::Puppet>::make();
+    auto&           bone   = puppet->bones.emplace_back();
+    Eigen::Affine3f rest   = Eigen::Affine3f::Identity();
+    rest.rotate(reference.cast<float>());
+    rest.scale(Eigen::Vector3f(2.0f, 3.0f, 1.0f));
+    bone.animation_reference.insert(Eigen::Affine3f(rest));
+    for (int id : { 1, 2 }) {
+        auto& animation  = puppet->anims.emplace_back();
+        animation.id     = id;
+        animation.fps    = 1.0;
+        animation.length = 1;
+        animation.mode   = owe::Puppet::PlayMode::Single;
+        auto& track      = animation.bone_tracks.emplace_back();
+        for (int frame : { 0, 1 }) {
+            const Eigen::Vector3f angle = id == 1      ? Eigen::Vector3f(0.0f, 0.0f, 0.6f)
+                                          : frame == 0 ? Eigen::Vector3f(-0.4f, 1.8f, 0.0f)
+                                                       : Eigen::Vector3f(0.0f, 1.5f, 4.4f);
+            track.frames.push(owe::Puppet::BoneFrame {
+                .position = Eigen::Vector3f(10.0f, 0.0f, 0.0f),
+                .angle    = angle,
+                .scale    = Eigen::Vector3f(2.0f, 3.0f, 1.0f),
+            });
+        }
+    }
+    puppet->prepared();
+    for (double weight : { 0.0, 0.25, 0.5, 1.0 }) {
+        for (double t : { 0.0, 0.25, 1.0 }) {
+            owe::PuppetLayer                 layer(puppet.clone());
+            owe::PuppetLayer::AnimationLayer authored[] = {
+                { .id = 1 },
+                { .id = 2, .blend = weight, .additive = true },
+            };
+            layer.prepared(
+                slice<owe::PuppetLayer::AnimationLayer>::from_raw_parts(authored, usize(2)));
+            Vec<owe::SceneAnimationEvent> events;
+            for (const auto& playback : layer.AnimationPlaybacks()) {
+                playback->Advance(0.0, events);
+                playback->Advance(t, events);
+                playback->Pause();
+            }
+            Quaterniond sample;
+            sample.coeffs() = ((1.0 - t) * sample_a.coeffs() - t * sample_b.coeffs()).normalized();
+            Quaterniond delta = reference.conjugate() * sample;
+            if (delta.w() < 0.0) delta.coeffs() *= -1.0;
+            Quaterniond weighted;
+            weighted.coeffs() = weight * delta.coeffs();
+            weighted.w() += 1.0 - weight;
+            weighted.normalize();
+            Eigen::Affine3f expected = Eigen::Affine3f::Identity();
+            expected.translate(
+                Eigen::Vector3f(10.0f + 10.0f * static_cast<float>(weight), 0.0f, 0.0f));
+            expected.rotate((base * weighted).cast<float>());
+            expected.scale(Eigen::Vector3f(2.0f, 3.0f, 1.0f));
+            EXPECT_TRUE(
+                layer.genFrame(0.0)[usize()].matrix().isApprox(expected.matrix(), 0.00001f));
+            EXPECT_TRUE(
+                layer.genFrame(100.0)[usize()].matrix().isApprox(expected.matrix(), 0.00001f));
+        }
+    }
 }
 
 TEST(MdlMesh, LegacyMissingReferenceSelectsFirstFrameDeltas) {

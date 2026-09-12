@@ -92,6 +92,14 @@ static Quaterniond ToQuaternion(Vector3f euler) {
            AngleAxis<double>(euler.x(), axis[usize(0)]);
 };
 
+static Quaterniond NlerpShortest(const Quaterniond& a, const Quaterniond& b, double t) {
+    Quaterniond  result;
+    const double signed_t = a.dot(b) < 0.0 ? -t : t;
+    result.coeffs()       = a.coeffs() * (1.0 - t) + b.coeffs() * signed_t;
+    result.normalize();
+    return result;
+}
+
 static BindLinear DecomposeBindLinear(const Matrix3f& linear) {
     Matrix3f rot = linear;
     Vector3f scale { rot.col(0).norm(), rot.col(1).norm(), rot.col(2).norm() };
@@ -158,12 +166,6 @@ void Puppet::prepared() {
             }
         }
     }
-
-    m_final_affines.clear();
-    m_final_affines.reserve(bones.len());
-    for (usize i {}; i < bones.len(); ++i) {
-        m_final_affines.emplace_back(Affine3f::Identity());
-    }
 }
 
 Option<usize> Puppet::attachmentIndex(ref<str> name) const noexcept {
@@ -179,19 +181,13 @@ Option<Eigen::Affine3f> Puppet::attachmentBindTransform(usize index) const noexc
     return Some(rstd::move(transform));
 }
 
-slice<Eigen::Affine3f> Puppet::genFrame(PuppetLayer& puppet_layer, double time) noexcept {
-    puppet_layer.updateInterpolation(time);
+slice<Eigen::Affine3f> PuppetLayer::genFrame(double time) noexcept {
+    updateInterpolation(time);
+    const auto& bones                     = m_puppet->bones;
+    const bool  world_anchored_bones      = m_puppet->world_anchored_bones;
+    const bool  additive_uses_first_frame = m_puppet->additive_uses_first_frame;
 
-    // TRS skinning is required: WE puppets animate scale (e.g. blink uses
-    // frame.scale.y → ~0). A pure-translation g_Bones would shift the
-    // whole sprite as a unit; intra-sprite compression needs non-identity
-    // linear so vertices within the sprite get differential treatment.
-    // Standard LBS: per-bone local affine = T(pos) · R(quat) · Diag(scale).
-    // Chained through parent's anim transform, then M_skin = A_world · inv_bind.
-    // WE anim convention: frame[0] is the replacement anchor pose for a bone.
-    // MDLA blend curves decide which dense bone-track slots are active for each
-    // animation layer; inactive bones keep bind pose instead of being diluted by
-    // unrelated replacement layers.
+    // Compose local TRS along the animation hierarchy before applying inverse binds.
     for (usize i {}; i < m_final_affines.len(); ++i) {
         const auto& bone   = bones[i];
         auto&       affine = m_final_affines[i];
@@ -208,12 +204,13 @@ slice<Eigen::Affine3f> Puppet::genFrame(PuppetLayer& puppet_layer, double time) 
         }
 
         const Puppet::BoneFrame* replace_base_frame { nullptr };
-        for (const auto& layer : puppet_layer.m_layers) {
-            if (layer.anim == nullptr || ! layer.anim_layer.visible || layer.anim_layer.additive)
+        for (const auto& layer : m_layers) {
+            if (! additive_uses_first_frame || layer.anim == nullptr ||
+                ! layer.anim_layer.visible || layer.IsAdditiveTransform())
                 continue;
             if (i >= layer.anim->bone_tracks.len()) continue;
             const auto& track = layer.anim->bone_tracks[i];
-            if (! HasAuthoredTrack(track)) continue;
+            if (! track.HasTransformSamples() || ! HasAuthoredTrack(track)) continue;
             const double blend =
                 LayerBoneBlend(*layer.anim, i, layer.interp_info, layer.anim_layer.blend);
             if (blend <= 0.0) continue;
@@ -231,24 +228,28 @@ slice<Eigen::Affine3f> Puppet::genFrame(PuppetLayer& puppet_layer, double time) 
             bone.animation_reference.is_some() ? *bone.animation_reference : bone.local_bind;
         const auto animation_linear = DecomposeBindLinear(animation_reference.linear());
 
-        Vector3f trans { replace_base_frame != nullptr ? replace_base_frame->position
-                                                       : bone.local_bind.translation() };
-        Vector3f scale { replace_base_frame != nullptr ? replace_base_frame->scale
-                                                       : bind_linear.scale };
-        // quat absorbs the anchor rotation directly. Each layer multiplies in its
-        // frame delta from frame[0], whose delta is identity.
-        Quaterniond       quat { replace_base_frame != nullptr ? replace_base_frame->quaternion
-                                                               : bind_linear.rotation };
+        const auto& initial_reference =
+            additive_uses_first_frame ? bone.local_bind : animation_reference;
+        const auto& initial_linear = additive_uses_first_frame ? bind_linear : animation_linear;
+        Vector3f    trans { replace_base_frame != nullptr ? replace_base_frame->position
+                                                          : initial_reference.translation() };
+        Vector3f    scale { replace_base_frame != nullptr ? replace_base_frame->scale
+                                                          : initial_linear.scale };
+        Quaterniond quat { replace_base_frame != nullptr ? replace_base_frame->quaternion
+                                                         : initial_linear.rotation };
         const Quaterniond ident { Quaterniond::Identity() };
 
-        for (auto& layer : puppet_layer.m_layers) {
+        for (auto& layer : m_layers) {
             auto& alayer = layer.anim_layer;
             if (layer.anim == nullptr || ! alayer.visible) continue;
             if (i >= layer.anim->bone_tracks.len()) continue;
 
             auto& info  = layer.interp_info;
             auto& track = layer.anim->bone_tracks[i];
-            if (! HasAuthoredTrack(track)) continue;
+            if (! track.HasTransformSamples() ||
+                (additive_uses_first_frame && ! HasAuthoredTrack(track)))
+                continue;
+            if (info.frame_a >= track.frames.len() || info.frame_b >= track.frames.len()) continue;
             auto& frame_base = track.frames[usize()];
             auto& frame_a    = track.frames[info.frame_a];
             auto& frame_b    = track.frames[info.frame_b];
@@ -258,9 +259,20 @@ slice<Eigen::Affine3f> Puppet::genFrame(PuppetLayer& puppet_layer, double time) 
             double blend = LayerBoneBlend(*layer.anim, i, info, alayer.blend);
             if (blend <= 0.0) continue;
 
-            // MDLS v2 without an explicit reference pose encodes additive
-            // deltas from each clip's first frame, not the mesh bind pose.
-            const bool use_reference_pose = alayer.additive && ! additive_uses_first_frame;
+            if (! additive_uses_first_frame && ! layer.IsAdditiveTransform()) {
+                const Vector3f position      = frame_a.position * one_t + frame_b.position * t;
+                const Vector3f sampled_scale = frame_a.scale * one_t + frame_b.scale * t;
+                trans                        = trans * (1.0 - blend) + position * blend;
+                scale                        = scale * (1.0 - blend) + sampled_scale * blend;
+                quat                         = NlerpShortest(
+                    quat, NlerpShortest(frame_a.quaternion, frame_b.quaternion, t), blend);
+                continue;
+            }
+
+            // Preserve the legacy first-frame compatibility path until its
+            // input conversion is known; it is not the Android reference rule.
+            const bool use_reference_pose =
+                layer.IsAdditiveTransform() && ! additive_uses_first_frame;
             const auto reference_position =
                 use_reference_pose ? animation_reference.translation() : frame_base.position;
             const auto reference_rotation =
@@ -268,14 +280,20 @@ slice<Eigen::Affine3f> Puppet::genFrame(PuppetLayer& puppet_layer, double time) 
             const auto reference_scale =
                 use_reference_pose ? animation_linear.scale : frame_base.scale;
 
-            auto frame_a_quat_delta = frame_a.quaternion * reference_rotation.conjugate();
-            auto frame_b_quat_delta = frame_b.quaternion * reference_rotation.conjugate();
-            auto pos_a_delta        = frame_a.position - reference_position;
-            auto pos_b_delta        = frame_b.position - reference_position;
-            auto scale_a_delta      = frame_a.scale - reference_scale;
-            auto scale_b_delta      = frame_b.scale - reference_scale;
+            auto pos_a_delta   = frame_a.position - reference_position;
+            auto pos_b_delta   = frame_b.position - reference_position;
+            auto scale_a_delta = frame_a.scale - reference_scale;
+            auto scale_b_delta = frame_b.scale - reference_scale;
 
-            quat *= frame_a_quat_delta.slerp(t, frame_b_quat_delta).slerp(1.0 - blend, ident);
+            if (use_reference_pose) {
+                const auto        sample = NlerpShortest(frame_a.quaternion, frame_b.quaternion, t);
+                const Quaterniond delta  = reference_rotation.conjugate() * sample;
+                quat *= NlerpShortest(ident, delta, blend);
+            } else {
+                const auto delta_a = frame_a.quaternion * reference_rotation.conjugate();
+                const auto delta_b = frame_b.quaternion * reference_rotation.conjugate();
+                quat *= delta_a.slerp(t, delta_b).slerp(1.0 - blend, ident);
+            }
             trans += blend * (pos_a_delta * one_t + pos_b_delta * t);
             scale += blend * (scale_a_delta * one_t + scale_b_delta * t);
         }
@@ -437,12 +455,6 @@ void PuppetLayer::prepared(slice<AnimationLayer> alayers) {
         }
         const bool ok = matched != nullptr && layer.visible;
 
-        if (ok && rstd::addressof(layer) == additive_base) {
-            // Additive-only stacks still need one absolute frame[0]
-            // pose; otherwise authored puppet pieces stay scattered.
-            out_layer.additive = false;
-        }
-
         Option<Arc<SceneAnimationPlayback>> playback;
         if (ok) {
             auto clip  = Arc<SceneAnimationClip>::make(SceneAnimationClipSpec {
@@ -458,19 +470,16 @@ void PuppetLayer::prepared(slice<AnimationLayer> alayers) {
         }
 
         m_layers[i] = Layer {
-            .anim_layer          = rstd::move(out_layer),
-            .anim                = ok ? matched : nullptr,
-            .playback            = rstd::move(playback),
-            .draw_order_additive = layer.additive,
+            .anim_layer           = rstd::move(out_layer),
+            .anim                 = ok ? matched : nullptr,
+            .playback             = rstd::move(playback),
+            .legacy_absolute_base = m_puppet->additive_uses_first_frame && ok &&
+                                    rstd::addressof(layer) == additive_base,
         };
     }
     for (const auto& layer : m_layers) {
         if (layer.playback.is_some()) m_playbacks.push((*layer.playback).clone());
     }
-}
-
-slice<Eigen::Affine3f> PuppetLayer::genFrame(double time) noexcept {
-    return m_puppet->genFrame(*this, time);
 }
 
 uint32_t PuppetLayer::boneIndex(ref<str> name) const noexcept {
@@ -580,7 +589,7 @@ auto PuppetLayer::DrawOrder(slice<PartOrder> parts) const -> Vec<usize> {
                 rstd::cmp::min(info.t == 1.0 ? info.frame_b : info.frame_a, curve.len() - usize(1));
             const double sample = curve[frame];
             auto&        value  = values[bone];
-            if (layer.draw_order_additive) {
+            if (layer.anim_layer.additive) {
                 const double next = value + weight * (sample - m_puppet->bones[bone].draw_order);
                 value = std::clamp(next, std::min(value, sample), std::max(value, sample));
             } else {
@@ -608,5 +617,10 @@ auto PuppetLayer::DrawOrder(slice<PartOrder> parts) const -> Vec<usize> {
     return order;
 }
 
-PuppetLayer::PuppetLayer(Arc<Puppet> pup): m_puppet(rstd::move(pup)) {}
+PuppetLayer::PuppetLayer(Arc<Puppet> pup): m_puppet(rstd::move(pup)) {
+    m_final_affines.reserve(m_puppet->bones.len());
+    for (usize i {}; i < m_puppet->bones.len(); ++i) {
+        m_final_affines.emplace_back(Affine3f::Identity());
+    }
+}
 PuppetLayer::~PuppetLayer() = default;
