@@ -112,7 +112,7 @@ void ParseImageObjImpl(SceneParseContext& context, wpscene::ImageObject& img_obj
         }
     }
 
-    const bool has_author_effect = CountVisibleImageEffects(wpimgobj.effects) > i32();
+    const bool has_author_effect = ! wpimgobj.effects.empty();
     // A solid layer's flat material only produces its source color; a final compositor owns
     // BLENDMODE and the previous-framebuffer input.
     const bool layer_material_is_final =
@@ -140,7 +140,7 @@ void ParseImageObjImpl(SceneParseContext& context, wpscene::ImageObject& img_obj
         AppendLayerCompositePassthroughEffect(vfs, wpimgobj);
     }
 
-    bool hasEffect = CountVisibleImageEffects(wpimgobj.effects) > i32() || is_linked_source;
+    bool hasEffect = ! wpimgobj.effects.empty() || is_linked_source;
 
     // No-effect fullscreen / compose layers contribute nothing on their own
     // (they just sample `_rt_default` and write it back). Mark as elidable
@@ -683,9 +683,6 @@ void ParseImageObjImpl(SceneParseContext& context, wpscene::ImageObject& img_obj
         const bool passthrough_can_composite_final =
             isPassthrough || ! parse_geometry.requires_source_draw;
         for (const auto& wpeffobj : wpimgobj.effects) {
-            if (! wpeffobj.visible && ! wpeffobj.visible_can_change()) {
-                continue;
-            }
             std::shared_ptr<SceneImageEffect> imgEffect = std::make_shared<SceneImageEffect>();
             imgEffect->name                             = wpeffobj.name;
             imgEffect->runtime_visible                  = wpeffobj.visible;
@@ -1205,7 +1202,6 @@ void ParseShapeObj(SceneParseContext& context, wpscene::ShapeObject& shape_obj) 
     const wpscene::ImageEffect* first_effect { nullptr };
     const wpscene::ImageEffect* last_effect { nullptr };
     for (const auto& effect : shape_obj.effects) {
-        if (! effect.visible && ! effect.visible_can_change()) continue;
         if (first_effect == nullptr) first_effect = &effect;
         last_effect = &effect;
     }

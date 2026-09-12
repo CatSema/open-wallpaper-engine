@@ -68,7 +68,6 @@ auto BuildMaterial(fs::VFS&, ShaderCache&, const SceneShaderEnvironment&, const 
     -> Result<MaterialBuild, MaterialBuildError>;
 auto ApplyLayerColorBlend(wpscene::Material&, i32 color_blend_mode) -> Option<BlendMode>;
 auto NeutralColorUniforms(ShaderValueMap) -> ShaderValueMap;
-auto CountVisibleImageEffects(std::span<const wpscene::ImageEffect>) -> i32;
 void ParseSpecTexName(std::string&, const wpscene::Material&, const ShaderInfo&, Scene&);
 auto IsLegacyAtmosphereShadowValue(const wpscene::Material&, std::string_view) -> bool;
 void RegisterMaterialBindings(Scene&, const std::shared_ptr<SceneMaterial>&,

@@ -149,12 +149,15 @@ bool ImageEffect::FromJson(const owe::Json& json, fs::VFS& vfs, SceneVersion v) 
     ReadVisibleProperty(json, visible, visible_user);
     visible_user_key = visible_user.name;
     AbsorbAllFieldBindings(json, field_bindings);
-    owe::GetJsonValue(json, "name", name, false);
     owe::GetJsonValue(json, "username", username, false);
     owe::GetJsonValue(json, "id", id, false);
     auto jEffect = LoadJsonFile(vfs, "/assets/" + filePath);
     if (! jEffect) return false;
     if (! FromFileJson(*jEffect, vfs)) return false;
+    std::string instance_name;
+    owe::GetJsonValue(json, "name", instance_name, false);
+    // SceneScript addresses effects by their authored instance names.
+    if (! instance_name.empty()) name = std::move(instance_name);
 
     if (auto injected_passes = json.get("passes"_str); injected_passes.is_some()) {
         auto array = (*injected_passes)->as_array();

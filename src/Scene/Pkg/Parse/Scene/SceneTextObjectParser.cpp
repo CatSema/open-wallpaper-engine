@@ -208,13 +208,7 @@ void ParseTextObjImpl(SceneParseContext& context, wpscene::TextObject& obj) {
     const bool has_text_user = ! obj.text_user.empty();
     bool wants_dynamic_text = has_text_script || has_indirect_text_script || has_pointsize_script ||
                               has_text_user || context.scene_layer_text_writes;
-    bool has_text_effect    = false;
-    for (const auto& effect : obj.effects) {
-        if (effect.visible || effect.visible_can_change()) {
-            has_text_effect = true;
-            break;
-        }
-    }
+    bool has_text_effect    = ! obj.effects.empty();
     const bool linked_source        = context.IsLinkedSource(obj.id);
     const auto text_render_mode     = ResolveTextRenderMode(TextSurfaceRequirements {
         .color_blend       = obj.colorBlendMode != i32(),
@@ -706,8 +700,6 @@ void ParseTextObjImpl(SceneParseContext& context, wpscene::TextObject& obj) {
             layer->SetFinalMaterialState(final_state);
 
             for (const auto& wpeffobj : obj.effects) {
-                if (! wpeffobj.visible && ! wpeffobj.visible_can_change()) continue;
-
                 auto effect             = std::make_shared<SceneImageEffect>();
                 effect->name            = wpeffobj.name;
                 effect->runtime_visible = wpeffobj.visible;

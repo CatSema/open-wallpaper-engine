@@ -70,14 +70,6 @@ ShaderValueMap NeutralColorUniforms(ShaderValueMap values) {
     return values;
 }
 
-i32 CountVisibleImageEffects(std::span<const wpscene::ImageEffect> effects) {
-    i32 count {};
-    for (const auto& effect : effects) {
-        if (effect.visible || effect.visible_can_change()) count += i32(1);
-    }
-    return count;
-}
-
 bool ParseEnabled(std::string_view str) { return str == "enabled"; }
 
 Option<bool> ParseAlphaWrite(std::string_view str) {
@@ -865,7 +857,7 @@ std::string ResolveMaterialTextureSlot(const SceneParseContext& context,
 bool CanUseImageAsSystemMediaFallback(const wpscene::ImageObject& image) {
     if (! image.puppet.empty()) return false;
     if (image.fullscreen || image.config.passthrough) return false;
-    return CountVisibleImageEffects(image.effects) == i32();
+    return image.effects.empty();
 }
 
 std::string ResolveLinkedImageFallback(const SceneParseContext& context, std::string_view texture) {
