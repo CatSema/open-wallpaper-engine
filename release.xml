@@ -1,3 +1,27 @@
+<release version="0.2.10" date="2026-09-12">
+  <description>
+    <p>Added:</p>
+    <ul>
+      <li>Initial macOS scene and web rendering support. #134 by @bigsaltyfishes</li>
+    </ul>
+    <p>Fixes:</p>
+    <ul>
+      <li>Text wrapping at the configured maximum width. #114 by @wehrwolfmann</li>
+      <li>Dangling Eigen expressions in parallax calculations. #135 by @ales-drnz</li>
+      <li>Text layout origin, color blending and linked clock rendering.</li>
+      <li>Puppet animation reference poses, blend weights, rotation order and timing.</li>
+      <li>Animated puppet part draw order and composed puppet proportions.</li>
+      <li>Source animation clip parsing and puppet blend map loading timeouts.</li>
+      <li>Composite backdrop transparency and conditional base texture loading.</li>
+      <li>Legacy shader materials and material property lookup.</li>
+      <li>Animated script property values, dynamic layer contexts and material bindings.</li>
+      <li>Named and initially hidden effects remain accessible to scene scripts.</li>
+      <li>Audio response demand, script timing and particle emission.</li>
+      <li>Particle control point attraction falloff.</li>
+    </ul>
+  </description>
+</release>
+
 <release version="0.2.9" date="2026-08-31">
   <description>
     <p>Added:</p>
