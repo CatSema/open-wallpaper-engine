@@ -96,16 +96,52 @@ TextureFormat ToTexFormate(int type) {
         return TextureFormat::RGBA8;
     }
 }
-// Reads the fixed-layout portion of a .tex header (everything up to and
-// including the optional image_type slot). Populates `header.extraHeader`
-// with the version stamps + flag bits the renderer consumes downstream,
-// and returns the parsed sub-versions so the body / sprite branches can
-// dispatch off explicit predicates instead of re-fetching the magic ints.
-//
-// Version validation is permissive: unsupported (texv,texi,texb) tuples
-// log an error but the function still returns a populated struct so the
-// caller can decide whether to bail or attempt a best-effort read.
-TexFormatVersion LoadHeader(fs::BinaryReader& file, ImageHeader& header) {
+struct TexBodyHeader {
+    TexFormatVersion version;
+    uint32_t         condition_count {};
+};
+
+auto InvalidTextureData(ref<str> name, ref<str> section) -> ImageParseError {
+    return { .kind    = ImageParseErrorKind::InvalidData,
+             .message = rstd::format("texture {} has invalid {}", name, section) };
+}
+
+bool SkipTextureBytes(fs::BinaryReader& file, uint32_t size) {
+    return u64(size) <= file.remaining() && file.SeekCur(static_cast<std::ptrdiff_t>(size));
+}
+
+auto SkipConditionalPatches(fs::BinaryReader& file, const TexBodyHeader& body, ref<str> name)
+    -> Result<empty, ImageParseError> {
+    if (body.condition_count == 0) return Ok(empty {});
+    if (file.remaining() < u64(4)) return Err(InvalidTextureData(name, "patch groups"_str));
+    const auto groups = file.ReadUint32();
+    if (u64(groups) > file.remaining() / u64(4))
+        return Err(InvalidTextureData(name, "patch group count"_str));
+    for (uint32_t group = 0; group < groups; ++group) {
+        if (file.remaining() < u64(4)) return Err(InvalidTextureData(name, "patch count"_str));
+        const auto patches = file.ReadUint32();
+        if (u64(patches) > file.remaining() / u64(32))
+            return Err(InvalidTextureData(name, "patch count"_str));
+        for (uint32_t patch = 0; patch < patches; ++patch) {
+            // Conditional overrides follow each base mip, including when not applied.
+            if (file.remaining() < u64(32)) return Err(InvalidTextureData(name, "patch"_str));
+            file.ReadUint32(); // unknown
+            file.ReadUint32(); // condition id
+            file.ReadUint32(); // x
+            file.ReadUint32(); // y
+            file.ReadUint32(); // width
+            file.ReadUint32(); // height
+            file.ReadInt32();  // image type
+            if (! SkipTextureBytes(file, file.ReadUint32()))
+                return Err(InvalidTextureData(name, "patch payload"_str));
+        }
+    }
+    return Ok(empty {});
+}
+
+auto LoadHeader(fs::BinaryReader& file, ImageHeader& header, ref<str> name)
+    -> Result<TexBodyHeader, ImageParseError> {
+    TexBodyHeader    body;
     TexFormatVersion v;
     v.texv                         = ReadTexVersion(file);
     v.texi                         = ReadTexVersion(file);
@@ -154,13 +190,28 @@ TexFormatVersion LoadHeader(fs::BinaryReader& file, ImageHeader& header) {
     header.count = file.ReadInt32();
 
     if (v.body_has_image_type()) header.type = static_cast<ImageType>(file.ReadInt32());
-    if (v.body_has_reserved_slot()) file.ReadInt32(); // reserved (always 0 in corpus)
+    if (v.body_has_conditions()) {
+        if (file.remaining() < u64(4)) return Err(InvalidTextureData(name, "condition count"_str));
+        body.condition_count = file.ReadUint32();
+        if (u64(body.condition_count) > file.remaining() / u64(13))
+            return Err(InvalidTextureData(name, "condition count"_str));
+        for (uint32_t index = 0; index < body.condition_count; ++index) {
+            if (! SkipTextureBytes(file, 12))
+                return Err(InvalidTextureData(name, "condition record"_str));
+            char value;
+            do {
+                if (file.Read(&value, 1) != 1)
+                    return Err(InvalidTextureData(name, "condition string"_str));
+            } while (value != '\0');
+        }
+    }
 
     if (v.texv != 5 || v.texi != 1 || v.texb < 1 || v.texb > 4) {
         rstd_error(
             "TexImageParser: unsupported version texv={} texi={} texb={}", v.texv, v.texi, v.texb);
     }
-    return v;
+    body.version = v;
+    return Ok(body);
 }
 
 void SetHeaderPow2(ImageHeader& header, std::int32_t mip_0_w, std::int32_t mip_0_h) {
@@ -279,7 +330,10 @@ auto TexImageParser::Parse(ref<str> name) const -> Result<Arc<Image>, ImageParse
     }
     auto tex_source = rstd::move(source).unwrap_unchecked();
     auto file       = fs::BinaryReader(tex_source.clone());
-    auto ver        = LoadHeader(file, img.header);
+    auto body       = rstd_try(LoadHeader(file, img.header, name));
+    auto ver        = body.version;
+    if (body.condition_count > 0)
+        rstd_warn("texture {}: conditional patches are not applied; using base mipmaps", name);
 
     // image
     std::int32_t _image_count = img.header.count;
@@ -352,6 +406,7 @@ auto TexImageParser::Parse(ref<str> name) const -> Result<Arc<Image>, ImageParse
                     mipmap.video_source = rstd::Some(rstd::move(video_source).unwrap_unchecked());
                     mipmap.size         = isize();
                     file.SeekSet(body_off + src_size);
+                    rstd_try(SkipConditionalPatches(file, body, name));
                     continue;
                 }
                 file.SeekSet(body_off);
@@ -412,6 +467,7 @@ auto TexImageParser::Parse(ref<str> name) const -> Result<Arc<Image>, ImageParse
             }
             mipmap.size = isize(static_cast<std::ptrdiff_t>(src_size * sizeof(uint8_t)));
             delete[] result;
+            rstd_try(SkipConditionalPatches(file, body, name));
         }
     }
     return Ok(rstd::move(img_ptr));
@@ -493,7 +549,8 @@ auto TexImageParser::ParseHeader(ref<str> name) const -> Result<ImageHeader, Ima
     }
     auto file = fs::BinaryReader(rstd::move(source).unwrap_unchecked());
 
-    auto ver = LoadHeader(file, header);
+    auto body = rstd_try(LoadHeader(file, header, name));
+    auto ver  = body.version;
     if (header.count < 0) {
         return Err(ImageParseError {
             .kind    = ImageParseErrorKind::InvalidData,
@@ -530,12 +587,13 @@ auto TexImageParser::ParseHeader(ref<str> name) const -> Result<ImageHeader, Ima
                     (void)decompressed_size;
                 }
                 std::int32_t src_size = file.ReadInt32();
-                if (src_size < 0 || ! file.SeekCur(src_size)) {
+                if (src_size < 0 || ! SkipTextureBytes(file, static_cast<uint32_t>(src_size))) {
                     return Err(ImageParseError {
                         .kind    = ImageParseErrorKind::InvalidData,
                         .message = rstd::format("texture {} has an invalid sprite mip body", name),
                     });
                 }
+                rstd_try(SkipConditionalPatches(file, body, name));
             }
         }
         // sprite pos

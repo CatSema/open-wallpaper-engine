@@ -35,11 +35,12 @@ export namespace owe
 //   │                        bit20..23=compo1..4)
 //   ├── width/height int32 ×2  pow-2 texture coord size (or pic size when not pow-2)
 //   ├── map_w/h      int32 ×2  original picture size (== width/height when pow-2)
-//   ├── reserved_a   int32  unused, never observed != 0
+//   ├── reserved_a   int32  unused
 //   ├── texb stamp ("TEXB0001"..0004)
 //   ├── count        int32  number of image slots
 //   ├── image_type   int32  if texb >= 3   (-1=UNKNOWN, FreeImage enum otherwise)
-//   ├── reserved_b   int32  if texb >= 4   (always 0 in corpus)
+//   ├── condition_count uint32 if texb >= 4
+//   ├── conditions: { id, operation, flags } uint32 x3 + NUL-terminated JSON
 //   │
 //   ├── per slot (× count):
 //   │   ├── mip_count int32
@@ -50,6 +51,7 @@ export namespace owe
 //   │       ├── src_size         int32
 //   │       └── src_size bytes (LZ4 if compressed; image-container body when
 //   │           texb>=3 + image_type valid; raw pixel data otherwise)
+//   │       └── if condition_count > 0: patch groups (workspace imhex/tex.hexpat)
 //   │
 //   └── if flags.sprite:
 //       ├── texs stamp ("TEXS0001"..0003)  ← only valid texs values
@@ -78,10 +80,7 @@ struct TexFormatVersion {
     // dropped the slot for texb=4 and misaligned the entire body parse on
     // PKGV0022+ assets.
     constexpr bool body_has_image_type() const noexcept { return texb >= 3; }
-    // texb >= 4 — header has an extra reserved int32 (always 0 in the
-    // observed corpus) immediately after image_type and before the mip
-    // section. Empirically verified across 5126/5129 texb=4 samples.
-    constexpr bool body_has_reserved_slot() const noexcept { return texb >= 4; }
+    constexpr bool body_has_conditions() const noexcept { return texb >= 4; }
     // texs == 1 — sprite frame coordinates are int pixels (legacy; never
     // observed in our corpus). Otherwise floats.
     constexpr bool sprite_frame_coords_int() const noexcept { return texs == 1; }

@@ -78,6 +78,104 @@ void WriteU32(std::ofstream& output, std::uint32_t value) {
     output.write(reinterpret_cast<const char*>(&value), sizeof(value));
 }
 
+class ConditionalTextureTest {
+protected:
+    std::filesystem::path root =
+        std::filesystem::temp_directory_path() /
+        ("owe-conditional-texture-" + std::to_string(rstd::process::id().to_primitive()));
+    owe::fs::VFS vfs;
+
+    void SetUp() noexcept {
+        std::filesystem::create_directories(root / "materials");
+        auto physical = owe::fs::make_physical_fs(owe::fs::ToPath(root.string()));
+        ASSERT_TRUE(physical.is_ok());
+        ASSERT_TRUE(vfs.mount("/assets"_str, rstd::move(physical).unwrap_unchecked()).is_ok());
+    }
+    void TearDown() noexcept { std::filesystem::remove_all(root); }
+
+    void WriteTexture(bool sprite, std::uint32_t conditions) {
+        std::ofstream output(root / "materials" / "conditional.tex", std::ios::binary);
+        output.write("TEXV0005", 9);
+        output.write("TEXI0001", 9);
+        for (auto value : { 0u, sprite ? 4u : 0u, 2u, 2u, 2u, 2u, 0u }) WriteU32(output, value);
+        output.write("TEXB0004", 9);
+        WriteU32(output, 1);
+        WriteU32(output, 0xffffffffu);
+        WriteU32(output, conditions);
+        for (std::uint32_t index = 0; index < conditions; ++index) {
+            for (auto value : { index + 1, 1u, 0u }) WriteU32(output, value);
+            const char json[] = R"({"condition":"newproperty"})";
+            output.write(json, sizeof(json));
+        }
+        WriteU32(output, 2);
+        for (auto extent : { 2u, 1u }) {
+            for (auto value : { extent, extent, 0u, 0u, extent * extent * 4 })
+                WriteU32(output, value);
+            for (std::uint32_t pixel = 0; pixel < extent * extent; ++pixel)
+                WriteU32(output, 0xff332211u);
+            if (conditions == 0) continue;
+            WriteU32(output, 2);
+            WriteU32(output, 0);
+            WriteU32(output, conditions);
+            for (std::uint32_t index = 0; index < conditions; ++index) {
+                for (auto value : { 0u, index + 1, 0u, 0u, 1u, 1u, 4u, 4u, 0xffffffffu })
+                    WriteU32(output, value);
+            }
+        }
+        if (! sprite) return;
+        output.write("TEXS0003", 9);
+        for (auto value : { 1u, 2u, 2u, 0u }) WriteU32(output, value);
+        const float frame[] { 0.1f, 0.0f, 0.0f, 2.0f, 0.0f, 0.0f, 2.0f };
+        output.write(reinterpret_cast<const char*>(frame), sizeof(frame));
+    }
+};
+
+TEST_F(ConditionalTextureTest, BaseMipmapsRemainAlignedWithMultipleConditions) {
+    for (auto conditions : { 0u, 1u, 2u }) {
+        WriteTexture(false, conditions);
+        owe::TexImageParser parser(&vfs);
+        auto                parsed = parser.Parse("conditional"_str);
+        ASSERT_TRUE(parsed.is_ok());
+        auto image = rstd::move(parsed).unwrap_unchecked();
+        ASSERT_EQ(image->slots.size(), 1u);
+        ASSERT_EQ(image->slots[0].mipmaps.size(), 2u);
+        for (std::size_t index = 0; index < 2; ++index) {
+            const auto& mip = image->slots[0].mipmaps[index];
+            EXPECT_EQ(mip.width, index == 0 ? 2 : 1);
+            EXPECT_EQ(mip.height, mip.width);
+            EXPECT_EQ(mip.size, isize(mip.width * mip.height * 4));
+            ASSERT_NE(mip.data, nullptr);
+            EXPECT_EQ(mip.data.get()[0], 0x11);
+        }
+        auto header = parser.ParseHeader("conditional"_str);
+        ASSERT_TRUE(header.is_ok());
+        EXPECT_EQ(header->width, image->header.width);
+        EXPECT_EQ(header->mipmap_larger, image->header.mipmap_larger);
+    }
+}
+
+TEST_F(ConditionalTextureTest, SpriteHeaderSkipsConditionalPatches) {
+    WriteTexture(true, 1);
+    owe::TexImageParser parser(&vfs);
+    auto                header = parser.ParseHeader("conditional"_str);
+    ASSERT_TRUE(header.is_ok());
+    EXPECT_EQ(header->spriteAnim.numFrames(), usize(1));
+    EXPECT_EQ(header->extraHeader.at("texs").val, 3);
+    EXPECT_TRUE(parser.Parse("conditional"_str).is_ok());
+}
+
+TEST_F(ConditionalTextureTest, RejectsTruncatedConditionsAndPatches) {
+    for (auto length : { 63u, 70u, 83u, 260u }) {
+        WriteTexture(false, 1);
+        std::filesystem::resize_file(root / "materials" / "conditional.tex", length);
+        owe::TexImageParser parser(&vfs);
+        auto                parsed = parser.Parse("conditional"_str);
+        ASSERT_TRUE(parsed.is_err()) << length;
+        EXPECT_EQ(parsed.unwrap_err_unchecked().kind, owe::ImageParseErrorKind::InvalidData);
+        if (length < 100) EXPECT_TRUE(parser.ParseHeader("conditional"_str).is_err());
+    }
+}
+
 TEST(ImageParser, BatchPreservesOrderAndBoundsConcurrency) {
     TrackingImageParser parser;
     Vec<String>         names;
