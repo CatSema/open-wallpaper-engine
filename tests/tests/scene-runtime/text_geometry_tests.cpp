@@ -60,6 +60,46 @@ TEST(TextLayouter, TabIsIgnoredWithoutAControlQuad) {
     EXPECT_EQ(mesh->GetIndexArray(rstd::usize()).RenderDataCount(), rstd::usize(72));
 }
 
+TEST(TextLayouter, LayoutOriginPreservesFontBaselineAcrossTextChanges) {
+    auto font = owe::text::FontCache::ResolveSystemFont("systemfont_monospace");
+    ASSERT_NE(font.bytes, nullptr);
+    owe::text::FontCache cache;
+    auto*                face = cache.GetFace(font, 64);
+    ASSERT_NE(face, nullptr);
+    face->Populate(owe::text::DecodeUtf8("0g"));
+
+    const std::vector<owe::SceneVertexArray::SceneVertexAttribute> attributes {
+        { .name = "a_Position", .type = owe::VertexType::FLOAT3 },
+        { .name = "a_TexCoord", .type = owe::VertexType::FLOAT2 },
+        { .name = "a_Color", .type = owe::VertexType::FLOAT4 },
+    };
+    for (auto origin :
+         { owe::text::TextMeshOrigin::Layout, owe::text::TextMeshOrigin::InkBounds }) {
+        auto mesh = std::make_shared<owe::SceneMesh>();
+        mesh->AddVertexArray(owe::SceneVertexArray(attributes, rstd::usize(4)));
+        mesh->AddIndexArray(owe::SceneIndexArray(rstd::usize(6)));
+        owe::text::TextLayoutStyle style;
+        style.mesh_origin = origin;
+        owe::text::TextLayouter layouter(face, mesh, style, 1);
+        for (const auto* text : { "0", "g" }) {
+            layouter.SetText(text);
+            const auto* glyph = face->Lookup(static_cast<std::uint32_t>(text[0]));
+            ASSERT_NE(glyph, nullptr);
+            const auto  metrics  = layouter.Metrics();
+            const float baseline = metrics.text_height * 0.5f - face->Metrics().ascender;
+            const float top      = baseline + glyph->bearing_y;
+            const float center   = top - static_cast<float>(glyph->pixel_h) * 0.5f;
+            EXPECT_FLOAT_EQ(metrics.source_center_y, center);
+            const auto& vertices = mesh->GetVertexArray(rstd::usize());
+            const auto  stride   = vertices.OneSize().to_primitive();
+            const float offset   = origin == owe::text::TextMeshOrigin::InkBounds ? center : 0.0f;
+            EXPECT_FLOAT_EQ(vertices.Data()[1], top - offset);
+            EXPECT_FLOAT_EQ(vertices.Data()[2 * stride + 1],
+                            top - static_cast<float>(glyph->pixel_h) - offset);
+        }
+    }
+}
+
 TEST(TextGeometry, DynamicEffectFollowsCurrentTextBounds) {
     const owe::text::TextGeometryPolicy policy {
         .frame_width  = 419.0f,

@@ -1217,16 +1217,19 @@ void TextLayouter::SetText(std::string_view utf8) {
     // lines are already placed inside that box, and shrinking the source to
     // the ink would re-centre them and lose the alignment again.
     if (have_glyph_bounds && wrap <= 0.0f) {
-        im.last_source_w               = std::max(1.0f, glyph_max_x - glyph_min_x);
-        im.last_source_h               = std::max(1.0f, glyph_max_y - glyph_min_y);
-        im.last_source_center_x        = 0.5f * (glyph_min_x + glyph_max_x);
-        im.last_source_center_y        = 0.5f * (glyph_min_y + glyph_max_y);
-        const float       shift_x      = -im.last_source_center_x;
-        const float       shift_y      = -im.last_source_center_y;
-        const std::size_t vertex_count = q * 4;
-        for (std::size_t i = 0; i < vertex_count; ++i) {
-            im.positions[i * 3 + 0] += shift_x;
-            im.positions[i * 3 + 1] += shift_y;
+        im.last_source_w        = std::max(1.0f, glyph_max_x - glyph_min_x);
+        im.last_source_h        = std::max(1.0f, glyph_max_y - glyph_min_y);
+        im.last_source_center_x = 0.5f * (glyph_min_x + glyph_max_x);
+        im.last_source_center_y = 0.5f * (glyph_min_y + glyph_max_y);
+        // Texture composition restores this offset; direct draws retain layout coordinates.
+        if (im.style.mesh_origin == TextMeshOrigin::InkBounds) {
+            const float       shift_x      = -im.last_source_center_x;
+            const float       shift_y      = -im.last_source_center_y;
+            const std::size_t vertex_count = q * 4;
+            for (std::size_t i = 0; i < vertex_count; ++i) {
+                im.positions[i * 3 + 0] += shift_x;
+                im.positions[i * 3 + 1] += shift_y;
+            }
         }
     }
 

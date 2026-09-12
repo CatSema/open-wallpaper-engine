@@ -233,7 +233,14 @@ private:
 // Mesh capacity is fixed at construction (`peak_quads`). SetText() that
 // would exceed it gets clamped + logged.
 
+enum class TextMeshOrigin
+{
+    Layout,
+    InkBounds,
+};
+
 struct TextLayoutStyle {
+    TextMeshOrigin       mesh_origin { TextMeshOrigin::InkBounds };
     std::array<float, 3> color { 1.0f, 1.0f, 1.0f };
     float                alpha { 1.0f };
     float                brightness { 1.0f };

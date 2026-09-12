@@ -423,6 +423,8 @@ void ParseTextObjImpl(SceneParseContext& context, wpscene::TextObject& obj) {
 
     // --- layouter owns the cache (FontFace lifetime) + mesh ref + style.
     text::TextLayoutStyle style;
+    style.mesh_origin =
+        direct_text ? text::TextMeshOrigin::Layout : text::TextMeshOrigin::InkBounds;
     style.color                 = { obj.color[0], obj.color[1], obj.color[2] };
     style.alpha                 = obj.alpha;
     style.brightness            = obj.brightness;
