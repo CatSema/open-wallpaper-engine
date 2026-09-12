@@ -125,7 +125,7 @@ public:
     };
 
     // Per-bone, per-frame curve (anim.length + 1 samples). Reused by both the
-    // mdla>=3 blend_curves block (0..1 weights) and mdla==6 scalar_curves
+    // mdla>=3 blend_curves block and mdla==6 scalar_curves
     // (draw order values).
     struct BoneFrameCurve {
         Vec<float> values;
@@ -170,7 +170,7 @@ public:
 
         // mdla>=3 trans block (presence gated by trans_flag).
         Option<AnimTrans> trans;
-        // mdla>=3 per-bone blend curves (size == bone_tracks.size() when present).
+        // MDLA >=3 per-bone scalar data, not TRS weights; retained for interpretation.
         Vec<BoneFrameCurve> blend_curves;
         // mdla>=4 timed events.
         Vec<AnimV4Event> v4_events;

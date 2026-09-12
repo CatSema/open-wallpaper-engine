@@ -15,21 +15,6 @@ using namespace rstd::prelude;
 using namespace rstd::literals;
 using rstd::sync::Arc;
 
-static double SampleBoneCurve(const Vec<Puppet::BoneFrameCurve>& curves, usize bone_index,
-                              const Puppet::Animation::InterpolationInfo& info) {
-    if (bone_index >= curves.len()) return 1.0;
-    const auto& values = curves[bone_index].values;
-    if (values.is_empty()) return 1.0;
-
-    auto sample = [&](usize frame) {
-        const auto i = frame < values.len() ? frame : values.len() - usize(1);
-        return static_cast<double>(values[i]);
-    };
-    const double a = sample(info.frame_a);
-    const double b = sample(info.frame_b);
-    return a * (1.0 - info.t) + b * info.t;
-}
-
 static bool IsTextureChannelTrack(const Puppet::Animation& animation, const Vec<float>& values) {
     if (animation.length < 0) return false;
     return values.len() == usize(static_cast<size_t>(animation.length) + 1);
@@ -54,13 +39,6 @@ static usize TextureChannelTrackCount(const Puppet::Animation& animation) {
         if (IsTextureChannelTrack(animation, track)) ++count;
     }
     return count;
-}
-
-static double LayerBoneBlend(const Puppet::Animation& anim, usize bone_index,
-                             const Puppet::Animation::InterpolationInfo& info, double layer_blend) {
-    // MDLA v6 scalar curves carry sort data, not transform blend weights.
-    double blend = layer_blend * SampleBoneCurve(anim.blend_curves, bone_index, info);
-    return std::max(0.0, blend);
 }
 
 static bool HasAuthoredTrack(const Puppet::BoneTrack& track) {
@@ -211,8 +189,7 @@ slice<Eigen::Affine3f> PuppetLayer::genFrame(double time) noexcept {
             if (i >= layer.anim->bone_tracks.len()) continue;
             const auto& track = layer.anim->bone_tracks[i];
             if (! track.HasTransformSamples() || ! HasAuthoredTrack(track)) continue;
-            const double blend =
-                LayerBoneBlend(*layer.anim, i, layer.interp_info, layer.anim_layer.blend);
+            const double blend = std::max(0.0, layer.anim_layer.blend);
             if (blend <= 0.0) continue;
             replace_base_frame = std::addressof(track.frames[usize()]);
             break;
@@ -256,7 +233,8 @@ slice<Eigen::Affine3f> PuppetLayer::genFrame(double time) noexcept {
 
             double t     = info.t;
             double one_t = 1.0 - info.t;
-            double blend = LayerBoneBlend(*layer.anim, i, info, alayer.blend);
+            // Per-bone scalar curves do not mask TRS, including zero-scale eyelid poses.
+            double blend = std::max(0.0, alayer.blend);
             if (blend <= 0.0) continue;
 
             if (! additive_uses_first_frame && ! layer.IsAdditiveTransform()) {

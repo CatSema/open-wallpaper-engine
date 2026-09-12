@@ -427,6 +427,35 @@ TEST(Puppet, ReferenceAdditiveUsesLocalRotationDeltaAndNormalizedLinearBlend) {
     }
 }
 
+TEST(Puppet, BoneScalarCurvesDoNotMaskTransformSamples) {
+    for (bool additive : { false, true }) {
+        for (double weight : { 0.0, 0.5, 1.0 }) {
+            auto  puppet    = MakeReplacementPuppet();
+            auto& animation = puppet->anims[usize()];
+            auto& curve     = animation.blend_curves.emplace_back();
+            curve.values.push(0.0f);
+            curve.values.push(1.0f);
+            for (auto& frame : animation.bone_tracks[usize()].frames) frame.scale.y() = 0.0f;
+            puppet->prepared();
+            owe::PuppetLayer                 layer(puppet.clone());
+            owe::PuppetLayer::AnimationLayer authored { .id       = 1,
+                                                        .blend    = weight,
+                                                        .additive = additive };
+            layer.prepared(
+                slice<owe::PuppetLayer::AnimationLayer>::from_raw_parts(&authored, usize(1)));
+            auto playback = layer.AnimationPlaybacks()[usize()].clone();
+            playback->Pause();
+            for (int frame : { 0, 1 }) {
+                playback->SetFrame(i32(frame));
+                const auto pose = layer.boneTransform(1, 0.0);
+                ASSERT_TRUE(pose.is_some());
+                EXPECT_NEAR(pose->linear()(1, 1), 1.0 - weight, 0.00001);
+                EXPECT_NEAR(pose->translation().x(), 4.0 + weight * (6.0 + 10.0 * frame), 0.00001);
+            }
+        }
+    }
+}
+
 TEST(MdlMesh, LegacyMissingReferenceSelectsFirstFrameDeltas) {
     const auto pkg_path =
         std::filesystem::path(WAYWALLEN_WORKSHOP_DIR) / "2907385672" / "scene.pkg";
