@@ -221,7 +221,9 @@ bool SceneWritesLayerText(slice<SceneObjectVar>);
 bool SceneHasScripts(slice<SceneObjectVar>);
 auto LoadJsonFile(fs::VFS&, const std::string&) -> Option<Json>;
 bool AppendLayerCompositePassthroughEffect(fs::VFS&, wpscene::ImageObject&);
-auto MakePuppetLayer(Arc<Puppet>, std::span<PuppetLayer::AnimationLayer>) -> Arc<PuppetLayer>;
+auto MakePuppetLayer(Arc<Puppet>, slice<wpscene::PuppetAnimationLayer>) -> Arc<PuppetLayer>;
+void WirePuppetAnimationScripts(SceneParseContext&, SceneNode*, Arc<PuppetLayer>,
+                                slice<wpscene::PuppetAnimationLayer>);
 void RegisterPuppetLayer(SceneParseContext&, SceneNode*, Arc<PuppetLayer>);
 void MarkHiddenLinkSource(SceneParseContext&, i32);
 auto ToSceneUserVisibilityBinding(const wpscene::VisibleUserBinding&) -> SceneUserVisibilityBinding;

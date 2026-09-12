@@ -1136,8 +1136,11 @@ void SceneAnimationPlayback::Stop() {
     m_previous_frame   = -0.5;
 }
 
-void SceneAnimationPlayback::SetFrame(i32 frame) {
-    float value = std::max(rstd::as_cast<float>(frame), 0.0f);
+void SceneAnimationPlayback::SetFrame(i32 frame) { SetFrame(rstd::as_cast<float>(frame)); }
+
+void SceneAnimationPlayback::SetFrame(float frame) {
+    if (! std::isfinite(frame)) return;
+    float value = std::max(frame, 0.0f);
     if (m_clip->End() > i32()) value = std::min(value, rstd::as_cast<float>(m_clip->End()));
     m_position_seconds = static_cast<double>(value) / static_cast<double>(m_clip->Fps());
     m_previous_frame   = static_cast<double>(value);

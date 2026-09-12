@@ -280,6 +280,8 @@ public:
     Option<Eigen::Affine3f> boneTransform(uint32_t index, double time) noexcept;
     Option<Eigen::Affine3f> attachmentTransform(usize index, double time) noexcept;
     auto AnimationPlaybacks() const noexcept -> slice<Arc<SceneAnimationPlayback>>;
+    auto AnimationPlayback(i32 layer_id) const -> Option<Arc<SceneAnimationPlayback>>;
+    void SetAnimationVisible(i32 layer_id, bool visible);
     auto TextureChannelBlendMap(double time) noexcept -> slice<float>;
 
     struct PartOrder {

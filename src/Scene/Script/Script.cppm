@@ -133,6 +133,7 @@ enum class ScriptPropertyObjectKind
     Layer,
     Effect,
     Material,
+    AnimationLayer,
 };
 
 struct ScriptBindingContext {
@@ -149,6 +150,8 @@ struct ScriptBindingContext {
 
     static auto ForLayer(owe::SceneNode*, ref<str>,
                          Option<Arc<owe::SceneAnimationPlayback>> = None()) -> ScriptBindingContext;
+    static auto ForAnimationLayer(owe::SceneNode*, ref<str>, Arc<owe::SceneAnimationPlayback>)
+        -> ScriptBindingContext;
     static auto ForEffect(owe::SceneNode*, owe::SceneImageEffectRef, ref<str>,
                           Option<Arc<owe::SceneAnimationPlayback>> = None())
         -> ScriptBindingContext;

@@ -618,6 +618,14 @@ auto ScriptBindingContext::ForLayer(owe::SceneNode* layer, ref<str> property,
     return context;
 }
 
+auto ScriptBindingContext::ForAnimationLayer(owe::SceneNode* layer, ref<str> property,
+                                             Arc<owe::SceneAnimationPlayback> animation)
+    -> ScriptBindingContext {
+    auto context        = ForLayer(layer, property, Some(rstd::move(animation)));
+    context.object_kind = ScriptPropertyObjectKind::AnimationLayer;
+    return context;
+}
+
 auto ScriptBindingContext::ForEffect(owe::SceneNode* layer, owe::SceneImageEffectRef effect,
                                      ref<str>                                 property,
                                      Option<Arc<owe::SceneAnimationPlayback>> animation)
@@ -3032,9 +3040,10 @@ JSValue AnimationPause(JSContext*, JSValueConst value, int, JSValueConst*) {
 
 JSValue AnimationSetFrame(JSContext* ctx, JSValueConst value, int argc, JSValueConst* argv) {
     if (argc < 1) return JS_UNDEFINED;
-    int32_t frame {};
-    if (JS_ToInt32(ctx, &frame, argv[0]) == 0) {
-        if (auto* playback = GetAnimationPlayback(value)) playback->SetFrame(i32(frame));
+    double frame {};
+    if (JS_ToFloat64(ctx, &frame, argv[0]) == 0) {
+        if (auto* playback = GetAnimationPlayback(value))
+            playback->SetFrame(static_cast<float>(frame));
     }
     return JS_UNDEFINED;
 }
@@ -3107,6 +3116,23 @@ JSValue WrapAnimation(JSContext* ctx, Option<Arc<owe::SceneAnimationPlayback>> p
 
 JSValue PropertyObjectGetAnimation(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
     return WrapAnimation(ctx, ActivePropertyAnimation(ctx, argc, argv));
+}
+
+JSValue WrapAnimationLayer(JSContext* ctx, Option<Arc<owe::SceneAnimationPlayback>> playback) {
+    JSValue object    = JS_NewObject(ctx);
+    JSValue animation = WrapAnimation(ctx, rstd::move(playback));
+    JSValue getter    = JS_NewCFunctionData(
+        ctx,
+        [](JSContext* context, JSValueConst, int, JSValueConst*, int, JSValue* data) -> JSValue {
+            return JS_DupValue(context, data[0]);
+        },
+        0,
+        0,
+        1,
+        &animation);
+    JS_SetPropertyStr(ctx, object, "getAnimation", getter);
+    JS_FreeValue(ctx, animation);
+    return object;
 }
 
 JSValue NodeGetAnimation(JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
@@ -3997,6 +4023,12 @@ FieldScript* JsRuntime::MakeFieldScript(std::string_view source, std::string_vie
         break;
     case ScriptPropertyObjectKind::Material:
         wrapped_object = WrapMaterial(ctx, context.material);
+        break;
+    case ScriptPropertyObjectKind::AnimationLayer:
+        wrapped_object = WrapAnimationLayer(ctx,
+                                            context.animation.is_some()
+                                                ? Some((*context.animation).clone())
+                                                : None<Arc<owe::SceneAnimationPlayback>>());
         break;
     }
     JSValueConst layer_value =

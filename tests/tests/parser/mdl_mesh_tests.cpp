@@ -65,6 +65,24 @@ static auto MakeReplacementPuppet() -> Arc<owe::Puppet> {
     return puppet;
 }
 
+TEST(Puppet, VisibilityChangesKeepTheSamePlayback) {
+    auto                             puppet = MakeReplacementPuppet();
+    owe::PuppetLayer                 layer(puppet.clone());
+    owe::PuppetLayer::AnimationLayer authored { .id = 1, .visible = false, .layer_id = 42 };
+    layer.prepared(slice<owe::PuppetLayer::AnimationLayer>::from_raw_parts(&authored, usize(1)));
+    auto playback = layer.AnimationPlayback(i32(42));
+    ASSERT_TRUE(playback.is_some());
+    EXPECT_TRUE(layer.AnimationPlayback(i32(99)).is_none());
+    (*playback)->SetFrame(0.5f);
+    EXPECT_FLOAT_EQ(layer.boneTransform(1, 0.0)->translation().x(), 4.0f);
+    layer.SetAnimationVisible(i32(42), true);
+    EXPECT_FLOAT_EQ(layer.boneTransform(1, 0.0)->translation().x(), 15.0f);
+    layer.SetAnimationVisible(i32(42), false);
+    EXPECT_FLOAT_EQ(layer.boneTransform(1, 0.0)->translation().x(), 4.0f);
+    EXPECT_EQ((*layer.AnimationPlayback(i32(42))).as_ptr(), (*playback).as_ptr());
+    EXPECT_FLOAT_EQ((*playback)->Sample().current, 0.5f);
+}
+
 TEST(Puppet, ReplacementLayersBlendSequentiallyFromReference) {
     auto puppet = MakeReplacementPuppet();
     for (bool reverse : { false, true }) {
@@ -536,6 +554,53 @@ TEST(Puppet, FirstFrameRotationDeltasUseReferenceLocalSpace) {
             }
         }
     }
+}
+
+TEST(MdlMesh, StaggeredBodyAnimationsReproduceCapturedPose) {
+    const auto pkg_path =
+        std::filesystem::path(WAYWALLEN_WORKSHOP_DIR) / "3462491575" / "scene.pkg";
+    if (! std::filesystem::exists(pkg_path)) GTEST_SKIP() << "workshop 3462491575 is not available";
+    owe::fs::VFS vfs;
+    auto         pkg_fs = owe::fs::WPPkgFs::open(owe::fs::ToPath(pkg_path.string()));
+    ASSERT_TRUE(pkg_fs.is_ok());
+    ASSERT_TRUE(vfs.mount("/assets"_str, pkg_fs->mount_handle()).is_ok());
+    owe::Mdl mdl;
+    ASSERT_TRUE(owe::MdlParser::Parse("models/身体_puppet.mdl"_str, vfs, mdl));
+    ASSERT_TRUE(mdl.puppet.is_some());
+    auto puppet = mdl.puppet->clone();
+    puppet->prepared();
+    owe::PuppetLayer                 layer(puppet.clone());
+    owe::PuppetLayer::AnimationLayer authored[] = { { .id = 729 },
+                                                    { .id = 3835, .additive = true },
+                                                    { .id = 4400, .additive = true } };
+    layer.prepared(slice<owe::PuppetLayer::AnimationLayer>::from_raw_parts(authored, usize(3)));
+    auto playbacks = layer.AnimationPlaybacks();
+    playbacks[usize(0)]->SetFrame(i32(120));
+    playbacks[usize(1)]->SetFrame(i32(96));
+    playbacks[usize(2)]->SetFrame(43.2f);
+    Vec<owe::SceneAnimationEvent> events;
+    for (const auto& playback : playbacks) {
+        playback->Advance(0.0, events);
+        playback->Advance(1.3582, events);
+    }
+    const auto pose = layer.genFrame(1.3582);
+    // Official frame 92, draw 450. Runtime fitted to the base animation's translation.
+    const float translations[][2] = { { 0, 0 },
+                                      { 5.5143356f, 14.705261f },
+                                      { 8.888123f, 20.167690f },
+                                      { 12.198914f, 16.576313f },
+                                      { 17.055420f, 13.853511f },
+                                      { 17.055412f, 13.853513f },
+                                      { 8.888115f, 20.167698f },
+                                      { 1.031670f, 10.194763f },
+                                      { 1.263428f, 18.676138f },
+                                      { 1.263428f, 18.676159f } };
+    ASSERT_EQ(pose.len(), usize(10));
+    for (usize i {}; i < pose.len(); ++i) {
+        EXPECT_NEAR(pose[i].translation().x(), translations[i.to_primitive()][0], 0.02f);
+        EXPECT_NEAR(pose[i].translation().y(), translations[i.to_primitive()][1], 0.02f);
+    }
+    EXPECT_NEAR(pose[usize(7)].matrix()(0, 0), 0.92220455f, 0.0001f);
 }
 
 TEST(MdlMesh, RayquazaReplacementPreservesSampledBoneChain) {

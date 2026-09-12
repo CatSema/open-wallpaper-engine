@@ -141,8 +141,8 @@ public:
     std::array<float, 3> backgroundcolor { 0.0f, 0.0f, 0.0f }; // PKGV0005+
     float                backgroundbrightness { 1.0f };        // PKGV0010+
 
-    std::string                              puppet;
-    std::vector<PuppetLayer::AnimationLayer> puppet_layers;
+    std::string               puppet;
+    Vec<PuppetAnimationLayer> puppet_layers;
 
     // PKGV0019+ named anchor on the parent's puppet (MDAT attachment). The
     // owning image renders at the parent puppet's bone[attachment.bone_index]

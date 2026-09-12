@@ -172,9 +172,9 @@ struct ModelObject {
     bool        reflected { true };
     bool        castshadow { true };
 
-    std::vector<PuppetLayer::AnimationLayer> puppet_layers;
-    VisibleUserBinding                       visible_user;
-    std::string                              visible_user_key;
+    Vec<PuppetAnimationLayer> puppet_layers;
+    VisibleUserBinding        visible_user;
+    std::string               visible_user_key;
 
     bool FromJson(const owe::Json& json, fs::VFS& vfs) {
         return FromJson(json, vfs, kSceneVersionUnknown);

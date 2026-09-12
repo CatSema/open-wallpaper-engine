@@ -432,7 +432,7 @@ void PuppetLayer::prepared(slice<AnimationLayer> alayers) {
                 break;
             }
         }
-        const bool ok = matched != nullptr && layer.visible;
+        const bool ok = matched != nullptr;
 
         Option<Arc<SceneAnimationPlayback>> playback;
         if (ok) {
@@ -468,6 +468,20 @@ uint32_t PuppetLayer::boneIndex(ref<str> name) const noexcept {
         }
     }
     return 0;
+}
+
+auto PuppetLayer::AnimationPlayback(i32 layer_id) const -> Option<Arc<SceneAnimationPlayback>> {
+    for (const auto& layer : m_layers) {
+        if (i32(layer.anim_layer.layer_id) == layer_id && layer.playback.is_some())
+            return Some((*layer.playback).clone());
+    }
+    return None();
+}
+
+void PuppetLayer::SetAnimationVisible(i32 layer_id, bool visible) {
+    for (auto& layer : m_layers) {
+        if (i32(layer.anim_layer.layer_id) == layer_id) layer.anim_layer.visible = visible;
+    }
 }
 
 Option<Eigen::Affine3f> PuppetLayer::boneTransform(uint32_t index, double time) noexcept {

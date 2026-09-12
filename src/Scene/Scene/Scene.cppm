@@ -1296,6 +1296,7 @@ public:
     void Pause();
     void Stop();
     void SetFrame(i32 frame);
+    void SetFrame(float frame);
     void SetRate(float rate);
 
     bool     IsPlaying() const { return m_playing; }

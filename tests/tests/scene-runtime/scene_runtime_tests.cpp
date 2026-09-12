@@ -1062,6 +1062,24 @@ TEST(UniformSourceParallax, ParentPropagationSelectsAncestorConfiguration) {
     mvp = capture_mvp();
     EXPECT_NEAR(mvp[rstd::usize(12)], 0.0f, 1e-5f);
     EXPECT_NEAR(mvp[rstd::usize(13)], 0.0f, 1e-5f);
+    child->SetCamera("layer");
+    owe::TransformUniformSource child_source(state.clone(), child_state.clone());
+    for (bool authored : { false, true }) {
+        child_state->parallax.authored = authored;
+        state->CameraParallax().enable = false;
+        const auto without_parallax =
+            scene_test::Capture(scene.Runtime().Frame(),
+                                child_source,
+                                owe::TransformUniformOutput::ModelViewProjection);
+        state->CameraParallax().enable = true;
+        const auto with_parallax =
+            scene_test::Capture(scene.Runtime().Frame(),
+                                child_source,
+                                owe::TransformUniformOutput::ModelViewProjection);
+        ASSERT_EQ(with_parallax.size(), without_parallax.size());
+        for (rstd::usize i {}; i < with_parallax.size(); ++i)
+            EXPECT_NEAR(with_parallax[i], without_parallax[i], 1e-5f);
+    }
 }
 
 TEST(UniformSourceParallax, OrthographicOmittedDepthUsesImplicitParallax) {

@@ -404,8 +404,7 @@ void ParseModelObjImpl(SceneParseContext& context, wpscene::ModelObject& model_o
     Option<Arc<PuppetLayer>> model_puppet_layer;
     if (mdl.puppet.is_some() && ! (*mdl.puppet)->bones.is_empty()) {
         model_puppet_layer =
-            Some(MakePuppetLayer((*mdl.puppet).clone(),
-                                 std::span<PuppetLayer::AnimationLayer>(model_obj.puppet_layers)));
+            Some(MakePuppetLayer((*mdl.puppet).clone(), model_obj.puppet_layers.as_slice()));
         RegisterPuppetLayer(context, node.as_ptr(), (*model_puppet_layer).clone());
     }
 
@@ -526,6 +525,11 @@ void ParseModelObjImpl(SceneParseContext& context, wpscene::ModelObject& model_o
     SetUniformConfig(context, node, rstd::move(svData));
     AssignNodeFieldAnimations(context, *node.as_ptr(), model_obj.field_bindings);
     WireFieldScripts(context, node, model_obj.field_bindings);
+    if (model_puppet_layer.is_some())
+        WirePuppetAnimationScripts(context,
+                                   node.as_ptr(),
+                                   (*model_puppet_layer).clone(),
+                                   model_obj.puppet_layers.as_slice());
     if (model_obj.skin == u32()) {
         (void)context.dynamic_model_prototypes.insert(
             String::make(rstd::cppstd::as_str(model_obj.model).unwrap()), node.clone());

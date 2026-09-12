@@ -182,7 +182,7 @@ void ParseImageObjImpl(SceneParseContext& context, wpscene::ImageObject& img_obj
     Option<Arc<PuppetLayer>> image_puppet_layer;
     if (puppet.is_some() && has_bones) {
         image_puppet_layer =
-            Some(MakePuppetLayer((*(*puppet)->puppet).clone(), wpimgobj.puppet_layers));
+            Some(MakePuppetLayer((*(*puppet)->puppet).clone(), wpimgobj.puppet_layers.as_slice()));
         RegisterPuppetLayer(context, spImgNode.as_ptr(), (*image_puppet_layer).clone());
     }
 
@@ -860,7 +860,7 @@ void ParseImageObjImpl(SceneParseContext& context, wpscene::ImageObject& img_obj
                             image_puppet_layer.is_some()
                                 ? (*image_puppet_layer).clone()
                                 : MakePuppetLayer((*(*puppet)->puppet).clone(),
-                                                  wpimgobj.puppet_layers);
+                                                  wpimgobj.puppet_layers.as_slice());
                         RegisterPuppetLayer(
                             context, spEffNode.as_ptr(), rstd::move(effect_puppet_layer));
                     }
@@ -1165,6 +1165,11 @@ void ParseImageObjImpl(SceneParseContext& context, wpscene::ImageObject& img_obj
 
     AssignNodeFieldAnimations(context, *spImgNode.as_ptr(), wpimgobj.field_bindings);
     WireFieldScripts(context, spImgNode, wpimgobj.field_bindings);
+    if (image_puppet_layer.is_some())
+        WirePuppetAnimationScripts(context,
+                                   spImgNode.as_ptr(),
+                                   (*image_puppet_layer).clone(),
+                                   wpimgobj.puppet_layers.as_slice());
     if (! wpimgobj.color_user_key.empty()) {
         context.scene->RegisterImageColorUserBinding(
             String::make(as_str(wpimgobj.color_user_key).unwrap()),

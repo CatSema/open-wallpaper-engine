@@ -21,6 +21,7 @@ import wavsen.audio;
 import wescene.fs;
 import wescene.json;
 import wescene.pkg.parse;
+import wescene.pkg_fs;
 import wescene.pkg.scene_obj;
 import wescene.scene;
 import wescene.testing.scene_parse_probe;
@@ -323,6 +324,57 @@ TEST(SceneObjectExpansion, ShapeOwnsItsWallpaperLayerIdentity) {
     ASSERT_NE(shape, nullptr);
     ASSERT_TRUE(shape->WallpaperIdentity().is_some());
     EXPECT_EQ(shape->WallpaperIdentity()->value, rstd::i32(42));
+}
+
+TEST(PuppetScriptParsing, VisibilityScriptsInitializeTheirOwnPlayback) {
+    const auto pkg_path =
+        std::filesystem::path(WAYWALLEN_WORKSHOP_DIR) / "3462491575" / "scene.pkg";
+    if (! std::filesystem::exists(pkg_path)) GTEST_SKIP() << "workshop 3462491575 is not available";
+    auto document = owe::wpscene::ParseSceneDocumentJson(
+        R"JSON({
+            "camera": {},
+            "general": {"orthogonalprojection": {"width": 1920, "height": 1080}},
+            "objects": [
+                {"id": 1, "name": "First", "image": "models/身体.json",
+                 "animationlayers": [{"id": 101, "animation": 3835, "name": "Offset",
+                    "visible": {"value": true, "scriptproperties": {"offset": 0.8},
+                    "script": "export var scriptProperties = createScriptProperties().addSlider({name:'offset', value:0}).finish(); export function init(value) { if (thisObject === thisLayer) throw new Error('wrong owner'); const animation = thisObject.getAnimation(); animation.play(); animation.setFrame(animation.frameCount * scriptProperties.offset); return value; }"}}]},
+                {"id": 2, "name": "Second", "image": "models/身体.json",
+                 "animationlayers": [{"id": 201, "animation": 3835, "name": "Offset",
+                    "visible": {"value": false, "scriptproperties": {"offset": 0.36},
+                    "script": "export var scriptProperties = createScriptProperties().addSlider({name:'offset', value:0}).finish(); export function init(value) { const animation = thisObject.getAnimation(); animation.play(); animation.setFrame(animation.frameCount * scriptProperties.offset); return true; }"}}]}
+            ]
+        })JSON",
+        owe::wpscene::kSceneVersionUnknown);
+    ASSERT_TRUE(document.is_some());
+    auto assets = owe::fs::make_physical_fs(owe::fs::ToPath(WAYWALLEN_ASSETS_DIR));
+    ASSERT_TRUE(assets.is_ok());
+    auto pkg = owe::fs::WPPkgFs::open(owe::fs::ToPath(pkg_path.string()));
+    ASSERT_TRUE(pkg.is_ok());
+    owe::fs::VFS vfs;
+    ASSERT_TRUE(vfs.mount("/assets"_str, std::move(assets).unwrap_unchecked()).is_ok());
+    ASSERT_TRUE(vfs.mount("/assets"_str, pkg->mount_handle()).is_ok());
+    wavsen::audio::SoundManager sound;
+    owe::SceneParser            parser;
+    auto                        parsed = parser.Parse(
+        "puppet-script"_str,
+        rstd::ref<owe::wpscene::SceneDocument>::from_raw_parts(rstd::addressof(*document)),
+        rstd::mut_ref<owe::fs::VFS>::from_raw_parts(rstd::addressof(vfs)),
+        rstd::mut_ref<wavsen::audio::SoundManager>::from_raw_parts(rstd::addressof(sound)));
+    ASSERT_TRUE(parsed.is_ok());
+    auto scene  = rstd::move(parsed).unwrap();
+    auto first  = scene.scene->RootMut()->FindByName("First");
+    auto second = scene.scene->RootMut()->FindByName("Second");
+    ASSERT_NE(first, nullptr);
+    ASSERT_NE(second, nullptr);
+    auto first_playback  = first->NamedAnimation("Offset"_str);
+    auto second_playback = second->NamedAnimation("Offset"_str);
+    ASSERT_TRUE(first_playback.is_some());
+    ASSERT_TRUE(second_playback.is_some());
+    EXPECT_EQ((*first_playback)->Frame(), rstd::i32(96));
+    EXPECT_EQ((*second_playback)->Frame(), rstd::i32(43));
+    EXPECT_NEAR((*second_playback)->Sample().current, 43.2f, 0.0001f);
+    EXPECT_NE((*first_playback).as_ptr(), (*second_playback).as_ptr());
 }
 
 TEST(TextColorBlendParsing, PreservesOverlayAdditiveAndDirectModes) {

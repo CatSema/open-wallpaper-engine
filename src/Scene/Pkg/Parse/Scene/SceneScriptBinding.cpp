@@ -94,6 +94,15 @@ bool SceneHasScripts(slice<SceneObjectVar> scene_objs) {
         for (const auto& binding : SceneObjectFieldBindings(scene_objs[index]).Entries()) {
             if (binding.script.is_some()) return true;
         }
+        const auto&                          object = scene_objs[index];
+        slice<wpscene::PuppetAnimationLayer> layers;
+        if (object.is_Image()) layers = object.as_Image().value.puppet_layers.as_slice();
+        if (object.is_Model()) layers = object.as_Model().value.puppet_layers.as_slice();
+        for (const auto& layer : layers) {
+            for (const auto& binding : layer.field_bindings.Entries()) {
+                if (binding.script.is_some()) return true;
+            }
+        }
     }
     return false;
 }
@@ -114,11 +123,11 @@ bool AppendLayerCompositePassthroughEffect(fs::VFS& vfs, wpscene::ImageObject& i
     return true;
 }
 
-Arc<PuppetLayer> MakePuppetLayer(Arc<Puppet>                            puppet,
-                                 std::span<PuppetLayer::AnimationLayer> layers) {
-    auto out = Arc<PuppetLayer>::make(rstd::move(puppet));
-    out->prepared(
-        slice<PuppetLayer::AnimationLayer>::from_raw_parts(layers.data(), usize(layers.size())));
+Arc<PuppetLayer> MakePuppetLayer(Arc<Puppet> puppet, slice<wpscene::PuppetAnimationLayer> layers) {
+    auto                             out = Arc<PuppetLayer>::make(rstd::move(puppet));
+    Vec<PuppetLayer::AnimationLayer> playback_layers;
+    for (const auto& layer : layers) playback_layers.push(layer.playback.Clone());
+    out->prepared(playback_layers.as_slice());
     return out;
 }
 
@@ -274,6 +283,37 @@ Option<float> ScriptValueAsFloat(const script::ScriptValue& value) {
     if (auto* p = std::get_if<script::Vec2Value>(&value)) return Some(static_cast<float>(p->x));
     if (auto* p = std::get_if<script::Vec3Value>(&value)) return Some(static_cast<float>(p->x));
     return None();
+}
+
+void WirePuppetAnimationScripts(SceneParseContext& context, SceneNode* node,
+                                Arc<PuppetLayer>                     puppet,
+                                slice<wpscene::PuppetAnimationLayer> layers) {
+    for (const auto& layer : layers) {
+        auto binding = layer.field_bindings.Get("visible"_str);
+        if (binding.is_none() || (**binding).script.is_none()) continue;
+        auto playback = puppet->AnimationPlayback(i32(layer.playback.layer_id));
+        if (playback.is_none()) continue;
+        const auto& spec    = **binding;
+        const auto& source  = *spec.script;
+        auto&       scripts = EnsureScriptScene(context);
+        auto*       field   = scripts.runtime().MakeFieldScript(
+            source.source,
+            utils::genSha1(std::span<const char>(source.source)),
+            script::FieldKind::Bool,
+            spec.ScriptProperties(),
+            source.initial_value,
+            script::ScriptBindingContext::ForAnimationLayer(
+                node, spec.field.as_str(), rstd::move(*playback)));
+        if (! field) continue;
+        SetScriptInitializationOrder(context, *field, node);
+        TrackRegisteredAssets(context, field);
+        auto owner = CopyableArcHold(puppet.clone());
+        scripts.AddActuator(
+            { field, [owner, id = i32(layer.playback.layer_id)](const script::ScriptValue& value) {
+                 if (auto visible = ScriptValueAsFloat(value); visible.is_some())
+                     owner.value->SetAnimationVisible(id, *visible >= 0.5f);
+             } });
+    }
 }
 
 Option<array<float, 2>> ScriptValueAsVec2(const script::ScriptValue& value) {

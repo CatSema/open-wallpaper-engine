@@ -583,10 +583,10 @@ auto TransformUniformSource::Evaluate(ref<dyn<UniformUpdateContext>> context,
         Matrix4d model = m_node->vertices_in_world_space ? Matrix4d::Identity() : node.ModelTrans();
         const auto& parallax = m_state->CameraParallax();
         auto        attached = camera.GetAttachedNode();
-        const bool  own_image_effect =
-            attached.is_some() && (*attached)->HasLayer() && *attached == m_node->node.as_ptr();
+        // A layer camera renders the complete local surface; its outer draw owns parallax.
+        const bool layer_camera = attached.is_some() && (*attached)->HasLayer();
         const bool apply_model_parallax =
-            node.Camera() != "effect" && parallax.enable && ! own_image_effect;
+            node.Camera() != "effect" && parallax.enable && ! layer_camera;
         array<float, 2> shift {};
         if (apply_model_parallax) {
             shift = m_state->ComputeParallaxOffset(*m_node, camera, render_view);
