@@ -451,6 +451,33 @@ TEST(UniformBufferSerializer, PacksVectorArraysUsingReflectedArrayStride) {
     EXPECT_FLOAT_EQ(ReadFloat(bytes, rstd::usize(20)), 4.0f);
 }
 
+TEST(UniformBufferSerializer, ExplicitZeroExtensionClearsMissingArrayComponents) {
+    const rstd::array<float, 3> values { 1.0f, 2.0f, 3.0f };
+    auto                        value = owe::UniformValue::fromZeroExtended(values.as_slice());
+    auto                        bytes = rstd::vec::Vec<rstd::u8>::make();
+    bytes.resize(rstd::usize(48), rstd::u8(0xff));
+    const auto slot = owe::vulkan::UniformSlot {
+        .name              = rstd::string::String::make("vectors"_str),
+        .size              = rstd::usize(48),
+        .count             = rstd::usize(3),
+        .scalar_kind       = owe::ShaderScalarKind::Float,
+        .scalar_width      = rstd::u32(32),
+        .vector_components = rstd::u32(2),
+        .array_stride      = rstd::u32(16),
+    };
+    const auto result =
+        owe::vulkan::SerializeUniformValue(bytes.as_mut_slice().as_mut_ref(),
+                                           slot,
+                                           value.View(),
+                                           owe::ShaderMatrixConvention::ColumnVector);
+    ASSERT_TRUE(result.is_ok());
+    EXPECT_FLOAT_EQ(ReadFloat(bytes, rstd::usize(0)), 1.0f);
+    EXPECT_FLOAT_EQ(ReadFloat(bytes, rstd::usize(4)), 2.0f);
+    EXPECT_FLOAT_EQ(ReadFloat(bytes, rstd::usize(16)), 3.0f);
+    for (auto offset : { 8, 12, 20, 24, 28, 32, 36, 40, 44 })
+        EXPECT_FLOAT_EQ(ReadFloat(bytes, rstd::usize(offset)), 0.0f);
+}
+
 TEST(UniformBufferBinding, UpdatesGenericSceneThroughBufferWriterTrait) {
     owe::Scene scene;
     auto       camera_node = Arc<owe::SceneNode>::make();

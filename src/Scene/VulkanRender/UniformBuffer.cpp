@@ -414,7 +414,8 @@ auto SerializeLinearValue(mut_ref<u8[]> destination, const UniformSlot& slot,
             .message = rstd::format("uniform {} scalar is not float32", slot.name.as_str()),
         });
     }
-    if (slot.scalar_kind != ShaderScalarKind::Unknown && value.size < slot.LogicalFloatElements()) {
+    if (slot.scalar_kind != ShaderScalarKind::Unknown && ! value.layout.zero_fill_tail &&
+        value.size < slot.LogicalFloatElements()) {
         return Err(UniformBufferUpdateError {
             .message = rstd::format("uniform {} value has {} floats, expected at least {}",
                                     slot.name.as_str(),
@@ -438,8 +439,9 @@ auto SerializeLinearValue(mut_ref<u8[]> destination, const UniformSlot& slot,
         return Ok(empty {});
     }
 
-    const auto components   = usize(slot.vector_components.to_primitive());
-    const auto write_count  = rstd::cmp::min(slot.count, value.size / components);
+    const auto components = usize(slot.vector_components.to_primitive());
+    const auto write_count =
+        rstd::cmp::min(slot.count, (value.size + components - usize(1)) / components);
     const auto array_stride = usize(slot.array_stride.to_primitive());
     if (array_stride < components * scalar_size) {
         return Err(UniformBufferUpdateError {
@@ -450,6 +452,7 @@ auto SerializeLinearValue(mut_ref<u8[]> destination, const UniformSlot& slot,
     for (usize element {}; element < write_count; ++element) {
         for (usize component {}; component < components; ++component) {
             const auto source = element * components + component;
+            if (source >= value.size) break;
             if (! WriteFloat(destination,
                              slot.offset + element * array_stride + component * scalar_size,
                              value.data[source.to_primitive()])) {

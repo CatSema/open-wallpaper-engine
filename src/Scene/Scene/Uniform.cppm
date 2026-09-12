@@ -38,6 +38,7 @@ struct UniformValueLayout {
     u32                  columns { u32(1) };
     usize                array_count { usize(1) };
     UniformMatrixStorage matrix_storage { UniformMatrixStorage::ColumnMajor };
+    bool                 zero_fill_tail { false };
 
     static auto Linear(usize elements) -> UniformValueLayout {
         return { .columns = rstd::as_cast<u32>(elements) };
@@ -117,6 +118,11 @@ public:
                                                     u32(static_cast<rstd::uint32_t>(mat.cols())),
                                                     usize(1),
                                                     UniformMatrixStorage::ColumnMajor);
+        return value;
+    }
+    static ShaderValue fromZeroExtended(slice<float> values) {
+        auto value                    = ShaderValue(values.as_raw_ptr(), values.len());
+        value.m_layout.zero_fill_tail = true;
         return value;
     }
     static ShaderValue fromMatrix(const Eigen::Ref<const Eigen::MatrixXd>& mat) {

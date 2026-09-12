@@ -745,7 +745,13 @@ void VulkanRender::Impl::drawFrame(Scene& scene) {
 void VulkanRender::Impl::drawFrameSwapchain(Scene& scene) {
     static std::size_t resource_index = 0;
 
-    RenderingResources& rr    = m_rendering_resources;
+    RenderingResources& rr = m_rendering_resources;
+    // Failed preparation must not consume a swapchain image or signal its acquire semaphore.
+    if (! waitForPreparedUploads(rr)) return;
+    auto texture_frames = rstd::dyn<SceneTextureAnimationView>::from_ref(scene);
+    if (! m_program.update(
+            scene.Runtime().Frame(), m_device->out_extent(), texture_frames.as_ref(), rr))
+        return;
     resource_index            = (resource_index + 1) % 3;
     std::uint32_t image_index = 0;
     {
@@ -785,12 +791,6 @@ void VulkanRender::Impl::drawFrameSwapchain(Scene& scene) {
         rstd_error("window frame surface lease rejected");
         return;
     }
-    if (! waitForPreparedUploads(rr)) return;
-    auto texture_frames = rstd::dyn<SceneTextureAnimationView>::from_ref(scene);
-    if (! m_program.update(
-            scene.Runtime().Frame(), m_device->out_extent(), texture_frames.as_ref(), rr))
-        return;
-
     (void)rr.command.Begin(VkCommandBufferBeginInfo {
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
         .pNext = nullptr,

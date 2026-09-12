@@ -1095,8 +1095,7 @@ auto PuppetUniformSource::Evaluate(ref<dyn<UniformUpdateContext>> context,
     if (writer.Wants(PuppetUniformOutput::BlendMap)) {
         auto blend_map = m_layer->TextureChannelBlendMap(time);
         if (! blend_map.is_empty())
-            writer.Write(PuppetUniformOutput::BlendMap,
-                         UniformValue(blend_map.as_raw_ptr(), blend_map.len()));
+            writer.Write(PuppetUniformOutput::BlendMap, UniformValue::fromZeroExtended(blend_map));
     }
     return writer.Finish();
 }
