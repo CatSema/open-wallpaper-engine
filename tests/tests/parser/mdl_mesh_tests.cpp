@@ -462,6 +462,105 @@ TEST(MdlMesh, ReadsLegacyAnimationReferenceWithoutReplacingMeshBind) {
     EXPECT_FLOAT_EQ(bone.animation_reference->translation().x(), 318.3017578125f);
 }
 
+TEST(Puppet, FirstFrameRotationDeltasUseReferenceLocalSpace) {
+    auto puppet = Arc<owe::Puppet>::make();
+    puppet->bones.emplace_back();
+    puppet->additive_uses_first_frame = true;
+    auto& animation                   = puppet->anims.emplace_back();
+    animation.id                      = 1;
+    animation.fps                     = 1.0;
+    animation.length                  = 1;
+    animation.mode                    = owe::Puppet::PlayMode::Single;
+    auto& track                       = animation.bone_tracks.emplace_back();
+    track.frames.push(owe::Puppet::BoneFrame {
+        .position = Eigen::Vector3f::Zero(),
+        .angle    = Eigen::Vector3f(0.6f, -0.4f, 0.2f),
+        .scale    = Eigen::Vector3f::Ones(),
+    });
+    track.frames.push(owe::Puppet::BoneFrame {
+        .position = Eigen::Vector3f::Zero(),
+        .angle    = Eigen::Vector3f(-0.3f, 0.7f, -0.5f),
+        .scale    = Eigen::Vector3f::Ones(),
+    });
+    puppet->prepared();
+    const auto& base = track.frames[usize()].quaternion;
+    const auto& end  = track.frames[usize(1)].quaternion;
+    for (bool additive : { false, true }) {
+        for (double weight : { 0.25, 0.5, 1.0 }) {
+            owe::PuppetLayer::AnimationLayer authored {
+                .id       = 1,
+                .blend    = weight,
+                .additive = additive,
+            };
+            for (float time : { 0.0f, 0.25f, 1.0f }) {
+                owe::PuppetLayer layer(puppet.clone());
+                layer.prepared(
+                    slice<owe::PuppetLayer::AnimationLayer>::from_raw_parts(&authored, usize(1)));
+                Vec<owe::SceneAnimationEvent> events;
+                const auto&                   playback = layer.AnimationPlaybacks()[usize()];
+                playback->Advance(0.0, events);
+                playback->Advance(time, events);
+                playback->Pause();
+                const auto expected = base.slerp(weight, base.slerp(time, end));
+                EXPECT_TRUE(layer.genFrame(0.0)[usize()].linear().isApprox(
+                    expected.toRotationMatrix().cast<float>(), 0.00001f));
+            }
+        }
+    }
+}
+
+TEST(MdlMesh, RayquazaReplacementPreservesSampledBoneChain) {
+    const auto pkg_path =
+        std::filesystem::path(WAYWALLEN_WORKSHOP_DIR) / "3045001236" / "scene.pkg";
+    if (! std::filesystem::exists(pkg_path)) GTEST_SKIP() << "workshop 3045001236 is not available";
+    owe::fs::VFS vfs;
+    auto         pkg_fs = owe::fs::WPPkgFs::open(owe::fs::ToPath(pkg_path.string()));
+    ASSERT_TRUE(pkg_fs.is_ok());
+    ASSERT_TRUE(vfs.mount("/assets"_str, pkg_fs->mount_handle()).is_ok());
+    owe::Mdl mdl;
+    ASSERT_TRUE(owe::MdlParser::Parse("models/Rayquaza/Rayquaza.mdl"_str, vfs, mdl));
+    ASSERT_TRUE(mdl.puppet.is_some());
+    auto puppet = mdl.puppet->clone();
+    ASSERT_TRUE(puppet->additive_uses_first_frame);
+    puppet->prepared();
+    int checked_animations = 0;
+    for (const auto& animation : puppet->anims) {
+        if (animation.id != 160 && animation.id != 161) continue;
+        ++checked_animations;
+        ASSERT_EQ(animation.bone_tracks.len(), puppet->bones.len());
+        owe::PuppetLayer                 layer(puppet.clone());
+        owe::PuppetLayer::AnimationLayer authored { .id = animation.id };
+        layer.prepared(
+            slice<owe::PuppetLayer::AnimationLayer>::from_raw_parts(&authored, usize(1)));
+        for (int frame : { 0, 15, 30, 45 }) {
+            layer.AnimationPlaybacks()[usize()]->SetFrame(i32(frame));
+            layer.AnimationPlaybacks()[usize()]->Pause();
+            const auto           actual = layer.genFrame(0.0);
+            Vec<Eigen::Affine3f> expected;
+            for (usize i {}; i < puppet->bones.len(); ++i) {
+                const auto&     bone  = puppet->bones[i];
+                const auto&     track = animation.bone_tracks[i];
+                Eigen::Affine3f local = bone.local_bind;
+                if (track.HasTransformSamples()) {
+                    ASSERT_GT(track.frames.len(), usize(frame));
+                    const auto& sample = track.frames[usize(frame)];
+                    local              = Eigen::Affine3f::Identity();
+                    local.translate(sample.position);
+                    local.rotate(sample.quaternion.cast<float>());
+                    local.scale(sample.scale);
+                }
+                if (! bone.noAnimParent()) local = expected[usize(bone.anim_parent)] * local;
+                expected.push(rstd::move(local));
+                const Eigen::Affine3f world = actual[i] * bone.world_bind;
+                EXPECT_TRUE(world.matrix().isApprox(expected[i].matrix(), 0.0001f))
+                    << "animation " << animation.id << " frame " << frame << " bone "
+                    << i.to_primitive() << " " << rstd::cppstd::to_string(bone.name);
+            }
+        }
+    }
+    EXPECT_EQ(checked_animations, 2);
+}
+
 TEST(Puppet, SortCurvesDoNotScaleBoneTransforms) {
     for (float scalar : { 0.0f, -6100.0f, 9500.0f }) {
         auto puppet = Arc<owe::Puppet>::make();

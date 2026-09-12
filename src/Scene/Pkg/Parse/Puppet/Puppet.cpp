@@ -290,8 +290,9 @@ slice<Eigen::Affine3f> PuppetLayer::genFrame(double time) noexcept {
                 const Quaterniond delta  = reference_rotation.conjugate() * sample;
                 quat *= NlerpShortest(ident, delta, blend);
             } else {
-                const auto delta_a = frame_a.quaternion * reference_rotation.conjugate();
-                const auto delta_b = frame_b.quaternion * reference_rotation.conjugate();
+                // Right-multiplied deltas must be expressed in the reference's local space.
+                const auto delta_a = reference_rotation.conjugate() * frame_a.quaternion;
+                const auto delta_b = reference_rotation.conjugate() * frame_b.quaternion;
                 quat *= delta_a.slerp(t, delta_b).slerp(1.0 - blend, ident);
             }
             trans += blend * (pos_a_delta * one_t + pos_b_delta * t);
