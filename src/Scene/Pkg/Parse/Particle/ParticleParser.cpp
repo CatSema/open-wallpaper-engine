@@ -786,6 +786,7 @@ auto VortexSpeedAtDistance(const Vortex& vortex, double distance) -> double {
 
 struct ControlPointForce {
     i32 controlpoint { 0 };
+    u32 flags { 2 };
 
     // how strongly the control point attracts or repels.
     float scale { 512.0f };
@@ -803,6 +804,7 @@ struct ControlPointForce {
 
         owe::GetJsonValue(j, "scale", v.scale, false);
         owe::GetJsonValue(j, "threshold", v.threshold, false);
+        owe::GetJsonValue(j, "flags", v.flags, false);
 
         owe::GetJsonValue(j, "origin", v.origin, false);
         return v;
@@ -1376,12 +1378,15 @@ struct ControlPointAttractOperator {
             controlpoint.basis * Eigen::Vector3f { config.origin.data() }.cast<double>();
         auto delta = context.delta.to_primitive();
         for (auto slot : context.slots) {
-            auto difference = offset - positions[slot.index].cast<double>();
-            if (difference.norm() < config.threshold) {
-                velocities[slot.index] = (velocities[slot.index].cast<double>() +
-                                          difference.normalized() * config.scale * delta)
-                                             .cast<float>();
-            }
+            Eigen::Vector3d difference = offset - positions[slot.index].cast<double>();
+            auto            distance   = difference.norm();
+            if (distance <= 0.0 || distance >= config.threshold) continue;
+            auto impulse = config.scale * delta * (1.0 - distance / config.threshold);
+            // WE limits the velocity increment near the control point by default.
+            if ((config.flags & u32(2)) != u32()) impulse = std::min(impulse, distance);
+            velocities[slot.index] =
+                (velocities[slot.index].cast<double>() + difference * (impulse / distance))
+                    .cast<float>();
         }
     }
 };
