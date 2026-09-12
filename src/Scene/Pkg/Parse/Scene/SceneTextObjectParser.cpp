@@ -218,7 +218,7 @@ void ParseTextObjImpl(SceneParseContext& context, wpscene::TextObject& obj) {
         .linked_source     = linked_source,
     });
     const bool direct_text          = text_render_mode == TextRenderMode::Direct;
-    const bool copy_background_seed = has_text_effect || obj.copybackground || linked_source;
+    const bool copy_background_seed = has_text_effect || obj.copybackground;
 
     std::string s_text;
     if (obj.text.is_string()) {
