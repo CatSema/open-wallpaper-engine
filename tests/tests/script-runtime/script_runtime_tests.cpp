@@ -76,6 +76,7 @@ struct ParticleControlProbe {
     }
     void Pause() { state->playing = false; }
     bool IsPlaying() const { return state->playing; }
+    void Emit(u32) const {}
 };
 
 struct SoundControlState {
@@ -2623,6 +2624,97 @@ TEST(ScriptUserProperty, ScriptedOriginLandsAtCenter) {
     const auto& v = std::get<Vec3Value>(fs->last_value());
     EXPECT_NEAR(v.x, 1920.0, 0.5);
     EXPECT_NEAR(v.y, 1080.0, 0.5);
+}
+
+TEST(ScriptAnimation, AnimatedRotationPassThroughStaysSynchronized) {
+    owe::Scene scene;
+    auto       node  = Arc<owe::SceneNode>::make();
+    auto       peer  = Arc<owe::SceneNode>::make();
+    auto       curve = Arc<owe::SceneAnimationCurve>::make();
+    curve->c1.push({ .frame = i32(), .value = 0.0f });
+    curve->c1.push({ .frame = i32(1), .value = 2.0f * rstd::f32::consts::PI.to_primitive() });
+    auto clip          = Arc<owe::SceneAnimationClip>::make(owe::SceneAnimationClipSpec {
+        .name = String::make("spin"_str),
+        .mode = String::make("loop"_str),
+        .fps  = 0.1f,
+        .end  = i32(1),
+    });
+    auto playback      = Arc<owe::SceneAnimationPlayback>::make(clip.clone());
+    auto peer_playback = Arc<owe::SceneAnimationPlayback>::make(clip.clone());
+    node->SetRotationAnimation({ .curve = curve.clone(), .playback = playback.clone() });
+    peer->SetRotationAnimation({ .curve = curve.clone(), .playback = peer_playback.clone() });
+    scene.RootMut()->AppendChild(node.clone());
+    scene.RootMut()->AppendChild(peer.clone());
+    JsRuntime rt;
+    auto*     fs = rt.MakeFieldScript(
+        "export function update(value) { return value; }",
+        "test/animated_rotation_passthrough",
+        FieldKind::Vec3,
+        owe::MakeObject(),
+        owe::IntoJson("0 0 0"),
+        ScriptBindingContext::ForLayer(node.as_ptr(), "angles"_str, Some(playback.clone())));
+    ASSERT_NE(fs, nullptr);
+    auto apply = MakeNodeTransformApply(node.clone(), NodeTransformTarget::Rotation);
+    for (double delta : { 0.0, 2.5, 2.5, 2.5 }) {
+        scene.Runtime().Advance(rstd::f64(delta));
+        scene.TickNodeFieldAnimations();
+        rt.TickAll();
+        apply(fs->last_value());
+        EXPECT_TRUE(node->Rotation().isApprox(peer->Rotation(), 0.00001f));
+    }
+    playback->Pause();
+    peer_playback->Pause();
+    scene.Runtime().Advance(rstd::f64(1.0));
+    scene.TickNodeFieldAnimations();
+    rt.TickAll();
+    apply(fs->last_value());
+    EXPECT_TRUE(node->Rotation().isApprox(peer->Rotation(), 0.00001f));
+    playback->Stop();
+    peer_playback->Stop();
+    scene.TickNodeFieldAnimations();
+    rt.TickAll();
+    apply(fs->last_value());
+    EXPECT_TRUE(node->Rotation().isZero(0.00001f));
+    playback->Play();
+    peer_playback->Play();
+    scene.Runtime().Advance(rstd::f64(1.0));
+    scene.TickNodeFieldAnimations();
+    rt.TickAll();
+    apply(fs->last_value());
+    EXPECT_TRUE(node->Rotation().isApprox(peer->Rotation(), 0.00001f));
+    EXPECT_GT(node->Rotation().y(), 0.0f);
+}
+
+TEST(ScriptAnimation, AnimatedValueRefreshPrecedesEventOverrides) {
+    auto node  = Arc<owe::SceneNode>::make();
+    auto curve = Arc<owe::SceneAnimationCurve>::make();
+    curve->c0.push({ .frame = i32(), .value = 0.25f });
+    auto clip     = Arc<owe::SceneAnimationClip>::make(owe::SceneAnimationClipSpec {
+        .fps = 1.0f,
+        .end = i32(1),
+    });
+    auto playback = Arc<owe::SceneAnimationPlayback>::make(rstd::move(clip));
+    node->SetAlphaAnimation({ .curve = rstd::move(curve), .playback = playback.clone() });
+    JsRuntime rt;
+    auto*     fs = rt.MakeFieldScript(
+        "export function animationEvent(event, value) { return value + 0.5; } "
+        "export function update(value) { return value; }",
+        "test/animated_value_event",
+        FieldKind::Scalar,
+        owe::MakeObject(),
+        owe::IntoJson(0),
+        ScriptBindingContext::ForLayer(node.as_ptr(), "alpha"_str, Some(playback.clone())));
+    ASSERT_NE(fs, nullptr);
+    Vec<owe::SceneAnimationEventDispatch> events;
+    node->TickFieldAnimations(0.0, events);
+    events.push({ .node = node.as_ptr(), .event = { .name = String::make("beat"_str) } });
+    rt.TickAll(events.as_slice());
+    EXPECT_DOUBLE_EQ(LastScalar(fs), 0.75);
+    MakeNodeAlphaApply(node.clone())(fs->last_value());
+    events.clear();
+    node->TickFieldAnimations(0.5, events);
+    rt.TickAll();
+    EXPECT_DOUBLE_EQ(LastScalar(fs), 0.25);
 }
 
 TEST(SceneAnimationPlayback, SharedFieldBindingsAdvanceOnceAndPreserveEventOrder) {

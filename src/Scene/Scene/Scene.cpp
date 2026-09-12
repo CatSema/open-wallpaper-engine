@@ -1277,6 +1277,13 @@ auto SceneNode::FieldAnimation(ref<str> field) const -> Option<Arc<SceneAnimatio
     return m_animations.ForProperty(field);
 }
 
+bool SceneNode::HasFieldAnimationTrack(ref<str> field) const {
+    for (const auto& binding : m_field_animation_tracks) {
+        if (binding.field == field) return true;
+    }
+    return false;
+}
+
 auto SceneNode::NamedAnimation(ref<str> name) const -> Option<Arc<SceneAnimationPlayback>> {
     return m_animations.Named(name);
 }

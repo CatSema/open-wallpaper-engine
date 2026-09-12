@@ -1677,6 +1677,7 @@ public:
     void RegisterAnimation(Arc<SceneAnimationPlayback> playback);
     void BindFieldAnimation(String field, Arc<SceneAnimationPlayback> playback);
     auto FieldAnimation(ref<str> field) const -> Option<Arc<SceneAnimationPlayback>>;
+    bool HasFieldAnimationTrack(ref<str> field) const;
     auto NamedAnimation(ref<str> name) const -> Option<Arc<SceneAnimationPlayback>>;
     void TickFieldAnimations(double runtime, Vec<SceneAnimationEventDispatch>& events);
     void SetAlphaSource(SceneNode* node) { m_alpha_source = node; }

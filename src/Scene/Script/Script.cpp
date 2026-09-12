@@ -594,10 +594,11 @@ struct FieldScript::Impl {
     // Layer-B: the SceneNode this script's `thisLayer` resolves to. Null →
     // fall back to the generic JS stub. `wrapped_layer` caches the JSValue
     // wrapper so per-frame swap doesn't reallocate.
-    owe::SceneNode* node { nullptr };
-    JSValue         wrapped_layer { JS_UNDEFINED };
-    JSValue         wrapped_object { JS_UNDEFINED };
-    String          property;
+    owe::SceneNode*          node { nullptr };
+    JSValue                  wrapped_layer { JS_UNDEFINED };
+    JSValue                  wrapped_object { JS_UNDEFINED };
+    String                   property;
+    ScriptPropertyObjectKind object_kind { ScriptPropertyObjectKind::Layer };
     // Per-script cursor-inside-bbox state used to edge-detect
     // cursorEnter / cursorLeave between frames.
     bool                                                          cursor_inside { false };
@@ -3691,6 +3692,29 @@ void JsRuntime::TickAll(slice<owe::SceneAnimationEventDispatch> animation_events
     SweepDeferred(ctx, &m_impl->host);
     const auto script_count = usize(m_impl->scripts.size());
 
+    // Node animations run before scripts; cached script returns must not erase their values.
+    for (usize index {}; index < script_count; ++index) {
+        auto* script = m_impl->scripts[index.to_primitive()]->m_impl.get();
+        if (! script->alive || script->node == nullptr ||
+            script->object_kind != ScriptPropertyObjectKind::Layer ||
+            ! script->node->HasFieldAnimationTrack(script->property.as_str()))
+            continue;
+        const auto property = rstd::cppstd::to_string(script->property);
+        JSValue    current  = JS_GetPropertyStr(ctx, script->wrapped_object, property.c_str());
+        if (JS_IsException(current)) {
+            m_impl->LogError(ctx, script->sha, "animated property read failed");
+            JS_FreeValue(ctx, current);
+            continue;
+        }
+        auto value = CoerceReturn(ctx, current, script->kind);
+        JS_FreeValue(ctx, current);
+        if (std::holds_alternative<std::monostate>(value)) continue;
+        JSValue next = ScriptValueToJs(ctx, value);
+        JS_FreeValue(ctx, script->current_value);
+        script->current_value = next;
+        script->last_value    = std::move(value);
+    }
+
     // Cursor event dispatch. For every script bound to a SceneNode, hit-
     // test the cursor against the node's world AABB and fire any of
     // cursorEnter/Leave/Move/Down/Up/Click that the script's module
@@ -4032,6 +4056,7 @@ FieldScript* JsRuntime::MakeFieldScript(std::string_view source, std::string_vie
     I->module_ns      = ns; // owns one ref now
     I->node           = node;
     I->property       = rstd::move(context.property);
+    I->object_kind    = context.object_kind;
     I->animation      = rstd::move(context.animation);
     I->wrapped_layer  = wrapped_layer;
     I->wrapped_object = wrapped_object;
