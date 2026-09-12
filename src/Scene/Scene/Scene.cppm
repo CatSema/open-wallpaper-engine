@@ -244,6 +244,8 @@ struct SceneRenderTarget {
     // Later graph versions of this RT keep earlier color content. Use this
     // for composition targets, not transient effect outputs.
     bool preserve_on_write { false };
+    // Blended draws may preserve backdrop alpha; replacement draws still initialize RGBA.
+    Option<bool> blend_alpha_write;
 
     i32 PhysicalWidth() const { return physical_width > i32() ? physical_width : width; }
     i32 PhysicalHeight() const { return physical_height > i32() ? physical_height : height; }

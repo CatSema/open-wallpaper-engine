@@ -658,6 +658,11 @@ void ParseImageObjImpl(SceneParseContext& context, wpscene::ImageObject& img_obj
                 .clear_on_first_write = true,
                 .preserve_on_write    = wpimgobj.composite_layer,
             };
+            if (wpimgobj.composite_layer) {
+                const auto clear_alpha = image_wpmat.combos.find("CLEARALPHA");
+                if (clear_alpha == image_wpmat.combos.end() || clear_alpha->second != i32(1))
+                    target.blend_alpha_write = Some(false);
+            }
             if (wpimgobj.fullscreen) {
                 target.bind = { .enable = true, .screen = true };
             }

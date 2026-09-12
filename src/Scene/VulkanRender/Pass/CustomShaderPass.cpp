@@ -725,6 +725,7 @@ void CustomShaderPass::prepare(Scene& scene, const Device& device, PassPrepareCo
         vk_textures[i] = (**prepared).image;
     }
     bool                         out_force_clear { false };
+    Option<bool>                 out_blend_alpha_write;
     rstd::Option<TextureRequest> output_attachment_request;
     rstd::Option<TextureRequest> msaa_attachment_request;
     rstd::Option<TextureRequest> depth_attachment_request;
@@ -735,8 +736,9 @@ void CustomShaderPass::prepare(Scene& scene, const Device& device, PassPrepareCo
         auto target = scene.RenderTarget(name);
         rstd_assert(target.is_some());
         if (target.is_none()) return;
-        const auto& rt  = **target;
-        out_force_clear = rt.force_clear && ! m_desc.preserve_output;
+        const auto& rt        = **target;
+        out_force_clear       = rt.force_clear && ! m_desc.preserve_output;
+        out_blend_alpha_write = rt.blend_alpha_write;
         if (m_desc.depth_only) {
             if (m_desc.depth_use.is_none()) return;
             auto prepared = context.resources->Resolve(*m_desc.depth_use);
@@ -895,12 +897,14 @@ void CustomShaderPass::prepare(Scene& scene, const Device& device, PassPrepareCo
                 VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT;
             const bool default_writes_alpha = ! ((*m_desc.node)->Camera().empty() ||
                                                  sstart_with((*m_desc.node)->Camera(), "global"));
-            const bool writes_alpha = material_ref.alpha_write.unwrap_or(default_writes_alpha);
+            SetBlend(blendmode, color_blend);
+            const bool writes_alpha = material_ref.alpha_write.unwrap_or(
+                color_blend.blendEnable ? out_blend_alpha_write.unwrap_or(default_writes_alpha)
+                                        : default_writes_alpha);
 
             if (writes_alpha) colorMask |= VK_COLOR_COMPONENT_A_BIT;
             color_blend.colorWriteMask = colorMask;
 
-            SetBlend(blendmode, color_blend);
             SetAlphaBlendWritePolicy(color_blend, writes_alpha);
             m_desc.blending = color_blend.blendEnable;
 
