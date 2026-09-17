@@ -1,6 +1,7 @@
 export module waywallen.web_producer_device;
 
 import rstd.cppstd;
+import rstd;
 import vvk;
 import weweb;
 
@@ -35,6 +36,10 @@ public:
     VkQueue          Queue() const { return queue_; }
     uint32_t         QueueFamily() const { return queue_family_; }
 
+    const vvk::InstanceDispatch& InstanceDispatch() const { return instance_dispatch_; }
+
+    const vvk::DeviceDispatch& DeviceDispatch() const { return device_dispatch_; }
+
     // 16-byte UUIDs from VkPhysicalDeviceIDProperties; valid post-Init.
     const uint8_t* DeviceUuid() const { return device_uuid_; }
     const uint8_t* DriverUuid() const { return driver_uuid_; }
@@ -65,7 +70,7 @@ public:
     void DestroyImported(ImportedFrame& imp);
 
     // Record vkCmdBlitImage `imp.image → slot_image` (scaled to
-    // `slot_extent`), submit, signal an exportable timeline. Blocks on
+    // `slot_extent`), submit, signal an exportable binary semaphore. Blocks on
     // a CPU fence so `imp` is safe to destroy when this returns. On
     // success returns a sync_file fd suitable for
     // `ww_bridge_pool_submit_slot` (caller hands ownership to bridge);
@@ -90,7 +95,12 @@ private:
     bool EnsureCpuUploadResources(const ::weweb::CpuPaintFrame& frame);
     void DestroyCpuUploadResources();
 
-    uint32_t FindMemoryType(uint32_t bits, VkMemoryPropertyFlags props) const;
+    rstd::Option<vvk::VulkanLoader> loader_;
+    vvk::InstanceDispatch           instance_dispatch_ {};
+    vvk::DeviceDispatch             device_dispatch_ {};
+    vvk::Instance                   instance_owner_;
+    vvk::Device                     device_owner_;
+    vvk::MemoryAllocator            allocator_;
 
     VkInstance                       instance_ { VK_NULL_HANDLE };
     VkPhysicalDevice                 phys_ { VK_NULL_HANDLE };
@@ -108,14 +118,9 @@ private:
     VkFence         blit_fence_ { VK_NULL_HANDLE };
     VkSemaphore     blit_sem_ { VK_NULL_HANDLE };
 
-    PFN_vkGetMemoryFdPropertiesKHR pfn_GetMemoryFdProperties_ { nullptr };
-    PFN_vkGetSemaphoreFdKHR        pfn_GetSemaphoreFd_ { nullptr };
-
-    VkBuffer       cpu_staging_buffer_ { VK_NULL_HANDLE };
-    VkDeviceMemory cpu_staging_memory_ { VK_NULL_HANDLE };
-    void*          cpu_staging_map_ { nullptr };
-    VkDeviceSize   cpu_staging_size_ { 0 };
-    bool           cpu_staging_coherent_ { false };
+    vvk::AllocatedBuffer             cpu_staging_buffer_;
+    rstd::Option<vvk::MemoryMapping> cpu_staging_mapping_;
+    VkDeviceSize                     cpu_staging_size_ { 0 };
 };
 
 } // namespace ww_wescene

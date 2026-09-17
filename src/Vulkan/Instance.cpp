@@ -65,9 +65,9 @@ vvk::DebugUtilsMessenger SetupDebugCallback(vvk::Instance& instance) {
     });
 }
 
-VkResult CreatInstance(vvk::Instance* inst, std::span<const std::string_view> exts,
-                       std::span<const std::string_view> layers, vvk::InstanceDispatch& dld,
-                       rstd::uint32_t api_version) {
+bool CreateInstance(vvk::Instance* inst, std::span<const std::string_view> exts,
+                    std::span<const std::string_view> layers, vvk::InstanceDispatch& dld,
+                    rstd::uint32_t api_version, const vvk::GlobalDispatch& global) {
     VkApplicationInfo app_info {
         .sType              = VK_STRUCTURE_TYPE_APPLICATION_INFO,
         .pNext              = nullptr,
@@ -103,21 +103,37 @@ VkResult CreatInstance(vvk::Instance* inst, std::span<const std::string_view> ex
     const void* instance_next = nullptr;
 #endif
 
-    return vvk::Instance::Create(
-        *inst,
-        app_info,
-        rstd::slice<const char*>::from_raw_parts(layer_names_c.data(), usize(layer_names_c.size())),
-        rstd::slice<const char*>::from_raw_parts(extension_names_c.data(),
-                                                 usize(extension_names_c.size())),
-        dld,
-        instance_next);
+    VkInstanceCreateInfo info {
+        .sType                   = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
+        .pNext                   = instance_next,
+        .pApplicationInfo        = &app_info,
+        .enabledLayerCount       = static_cast<rstd::uint32_t>(layer_names_c.size()),
+        .ppEnabledLayerNames     = layer_names_c.data(),
+        .enabledExtensionCount   = static_cast<rstd::uint32_t>(extension_names_c.size()),
+        .ppEnabledExtensionNames = extension_names_c.data(),
+    };
+#if __is_target_os(macos)
+    for (auto ext : exts)
+        if (ext == "VK_KHR_portability_enumeration")
+            info.flags |= VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
+#endif
+    auto result = vvk::Instance::Create(*inst, global, info, dld);
+    if (result.is_err()) {
+        const auto error = result.unwrap_err_unchecked();
+        rstd_error("instance creation failed: kind={}, vk={}, command={}",
+                   static_cast<int>(error.kind),
+                   static_cast<int>(error.api_result),
+                   error.command ? error.command : "");
+        return false;
+    }
+    return true;
 }
-void EnumateExts(owe::Set<std::string>& set, const vvk::InstanceDispatch& dld) {
+void EnumateExts(owe::Set<std::string>& set, const vvk::GlobalDispatch& dld) {
     if (auto rv = vvk::EnumerateInstanceExtensionProperties(dld); rv.is_some()) {
         for (const auto& ext : *rv) set.insert(ext.extensionName);
     }
 }
-void EnumateLayers(owe::Set<std::string>& set, const vvk::InstanceDispatch& dld) {
+void EnumateLayers(owe::Set<std::string>& set, const vvk::GlobalDispatch& dld) {
     if (auto rv = vvk::EnumerateInstanceLayerProperties(dld); rv.is_some()) {
         for (const auto& ext : *rv) set.insert(ext.layerName);
     }
@@ -186,9 +202,15 @@ void Instance::Destroy() {}
 
 bool Instance::Create(Instance& inst, std::span<const Extension> instExts,
                       std::span<const InstanceLayer> instLayers, rstd::uint32_t api_version) {
-    if (! vvk::Load(inst.m_dld)) return false;
+    auto loader = vvk::VulkanLoader::Open();
+    if (loader.is_err()) {
+        rstd_error("Vulkan loader unavailable: {}", loader.unwrap_err_unchecked().message);
+        return false;
+    }
+    inst.m_loader      = Some(loader.unwrap_unchecked());
+    const auto& global = inst.m_loader->global();
 
-    EnumateExts(inst.m_extensions, inst.m_dld);
+    EnumateExts(inst.m_extensions, global);
     Set<std::string>                           exts, layers;
     rstd::array<std::span<const Extension>, 2> test_exts_array {
         std::span<const Extension>(base_inst_exts.data(), base_inst_exts.len().to_primitive()),
@@ -205,7 +227,7 @@ bool Instance::Create(Instance& inst, std::span<const Extension> instExts,
         }
     }
 
-    EnumateLayers(inst.m_layers, inst.m_dld);
+    EnumateLayers(inst.m_layers, global);
     rstd::array<std::span<const InstanceLayer>, 2> test_layers_array {
         std::span<const InstanceLayer>(base_inst_layers.data(),
                                        base_inst_layers.len().to_primitive()),
@@ -225,8 +247,8 @@ bool Instance::Create(Instance& inst, std::span<const Extension> instExts,
     std::vector<std::string_view> exts_vec { exts.begin(), exts.end() },
         layers_vec { layers.begin(), layers.end() };
 
-    VVK_CHECK_BOOL_RE(CreatInstance(&inst.m_vinst, exts_vec, layers_vec, inst.m_dld, api_version));
-    vvk::Load(*inst.m_vinst, inst.m_dld);
+    if (! CreateInstance(&inst.m_vinst, exts_vec, layers_vec, inst.m_dld, api_version, global))
+        return false;
     inst.m_api_version = api_version;
     inst.m_enabled_extensions.assign(exts.begin(), exts.end());
 

@@ -70,6 +70,8 @@ struct RenderInitInfo {
         VkDevice         device;
         VkQueue          graphics_queue;
         rstd::uint32_t   graphics_queue_family;
+        // Borrowed from the renderer; valid for the external swapchain lifetime.
+        PFN_vkGetInstanceProcAddr get_instance_proc_addr;
     };
     std::function<std::unique_ptr<ExSwapchain>(const ExSwapchainHandles&)> ex_swapchain_factory;
 };

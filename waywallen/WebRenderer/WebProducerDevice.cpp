@@ -6,11 +6,13 @@ module;
 #include <sys/sysmacros.h>
 #include <unistd.h>
 
+#define VK_NO_PROTOTYPES
 #include <vulkan/vulkan.h>
 
 module waywallen.web_producer_device;
 
 import rstd.cppstd;
+import rstd;
 import vvk;
 import weweb;
 
@@ -93,36 +95,42 @@ WebProducerDevice::~WebProducerDevice() { Shutdown(); }
 void WebProducerDevice::SetRenderNode(const std::string& path) { render_node_ = path; }
 
 bool WebProducerDevice::Init() {
-    return CreateInstance() && PickPhysicalDevice() && CreateDevice() && CreateCommandPool() &&
-           CreateSyncObjects();
+    Shutdown();
+    if (CreateInstance() && PickPhysicalDevice() && CreateDevice() && CreateCommandPool() &&
+        CreateSyncObjects())
+        return true;
+    Shutdown();
+    return false;
 }
 
 void WebProducerDevice::Shutdown() {
-    if (device_) vkDeviceWaitIdle(device_);
+    if (device_) device_dispatch_.vkDeviceWaitIdle(device_);
 
     DestroyCpuUploadResources();
 
     if (blit_sem_) {
-        vkDestroySemaphore(device_, blit_sem_, nullptr);
+        device_dispatch_.vkDestroySemaphore(device_, blit_sem_, nullptr);
         blit_sem_ = VK_NULL_HANDLE;
     }
     if (blit_fence_) {
-        vkDestroyFence(device_, blit_fence_, nullptr);
+        device_dispatch_.vkDestroyFence(device_, blit_fence_, nullptr);
         blit_fence_ = VK_NULL_HANDLE;
     }
     if (cmd_pool_) {
-        vkDestroyCommandPool(device_, cmd_pool_, nullptr);
+        device_dispatch_.vkDestroyCommandPool(device_, cmd_pool_, nullptr);
         cmd_pool_ = VK_NULL_HANDLE;
         blit_cmd_ = VK_NULL_HANDLE;
     }
-    if (device_) {
-        vkDestroyDevice(device_, nullptr);
-        device_ = VK_NULL_HANDLE;
-    }
-    if (instance_) {
-        vkDestroyInstance(instance_, nullptr);
-        instance_ = VK_NULL_HANDLE;
-    }
+    allocator_.reset();
+    device_owner_.reset();
+    device_ = VK_NULL_HANDLE;
+    queue_  = VK_NULL_HANDLE;
+    instance_owner_.reset();
+    instance_          = VK_NULL_HANDLE;
+    phys_              = VK_NULL_HANDLE;
+    device_dispatch_   = {};
+    instance_dispatch_ = {};
+    loader_            = rstd::None();
 }
 
 bool WebProducerDevice::CreateInstance() {
@@ -140,19 +148,35 @@ bool WebProducerDevice::CreateInstance() {
     ci.sType            = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
     ci.pApplicationInfo = &app;
 
-    VK_CHECK(vkCreateInstance(&ci, nullptr, &instance_));
+    auto loaded = vvk::VulkanLoader::Open();
+    if (loaded.is_err()) {
+        std::fprintf(stderr, "WebProducerDevice: Vulkan loader open failed\n");
+        return false;
+    }
+    loader_      = rstd::Some(loaded.unwrap_unchecked());
+    auto created = vvk::Instance::Create(
+        instance_owner_, loader_.as_ref().unwrap_unchecked().global(), ci, instance_dispatch_);
+    if (created.is_err()) {
+        const auto error = created.unwrap_err_unchecked();
+        std::fprintf(stderr,
+                     "WebProducerDevice: instance creation failed (%s, VkResult=%d)\n",
+                     error.command ? error.command : "dispatch",
+                     static_cast<int>(error.api_result));
+        return false;
+    }
+    instance_ = *instance_owner_;
     return true;
 }
 
 bool WebProducerDevice::PickPhysicalDevice() {
     uint32_t count = 0;
-    VK_CHECK(vkEnumeratePhysicalDevices(instance_, &count, nullptr));
+    VK_CHECK(instance_dispatch_.vkEnumeratePhysicalDevices(instance_, &count, nullptr));
     if (count == 0) {
         std::fprintf(stderr, "WebProducerDevice: no Vulkan physical devices\n");
         return false;
     }
     std::vector<VkPhysicalDevice> devs(count);
-    VK_CHECK(vkEnumeratePhysicalDevices(instance_, &count, devs.data()));
+    VK_CHECK(instance_dispatch_.vkEnumeratePhysicalDevices(instance_, &count, devs.data()));
 
     const bool pinning             = ! render_node_.empty();
     uint32_t   wanted_render_major = 0;
@@ -172,11 +196,11 @@ bool WebProducerDevice::PickPhysicalDevice() {
 
     for (auto pd : devs) {
         uint32_t qcount = 0;
-        vkGetPhysicalDeviceQueueFamilyProperties2(pd, &qcount, nullptr);
+        instance_dispatch_.vkGetPhysicalDeviceQueueFamilyProperties2(pd, &qcount, nullptr);
         std::vector<VkQueueFamilyProperties2> qfp(
             qcount,
             VkQueueFamilyProperties2 { .sType = VK_STRUCTURE_TYPE_QUEUE_FAMILY_PROPERTIES_2 });
-        vkGetPhysicalDeviceQueueFamilyProperties2(pd, &qcount, qfp.data());
+        instance_dispatch_.vkGetPhysicalDeviceQueueFamilyProperties2(pd, &qcount, qfp.data());
 
         uint32_t picked_qf = UINT32_MAX;
         for (uint32_t i = 0; i < qcount; ++i) {
@@ -191,9 +215,9 @@ bool WebProducerDevice::PickPhysicalDevice() {
         if (picked_qf == UINT32_MAX) continue;
 
         uint32_t ecount = 0;
-        vkEnumerateDeviceExtensionProperties(pd, nullptr, &ecount, nullptr);
+        instance_dispatch_.vkEnumerateDeviceExtensionProperties(pd, nullptr, &ecount, nullptr);
         std::vector<VkExtensionProperties> exts(ecount);
-        vkEnumerateDeviceExtensionProperties(pd, nullptr, &ecount, exts.data());
+        instance_dispatch_.vkEnumerateDeviceExtensionProperties(pd, nullptr, &ecount, exts.data());
 
         bool has_ext_mem_fd = false, has_dma_buf = false, has_modifier = false,
              has_ext_sem_fd = false, has_q_foreign = false, has_fmt_list = false,
@@ -225,7 +249,7 @@ bool WebProducerDevice::PickPhysicalDevice() {
             VkPhysicalDeviceProperties2 props2 {};
             props2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
             props2.pNext = &drm;
-            vkGetPhysicalDeviceProperties2(pd, &props2);
+            instance_dispatch_.vkGetPhysicalDeviceProperties2(pd, &props2);
             if (! drm.hasRender) continue;
             if (static_cast<uint32_t>(drm.renderMajor) != wanted_render_major ||
                 static_cast<uint32_t>(drm.renderMinor) != wanted_render_minor)
@@ -236,7 +260,7 @@ bool WebProducerDevice::PickPhysicalDevice() {
         queue_family_ = picked_qf;
         VkPhysicalDeviceMemoryProperties2 mem_props2 {};
         mem_props2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2;
-        vkGetPhysicalDeviceMemoryProperties2(phys_, &mem_props2);
+        instance_dispatch_.vkGetPhysicalDeviceMemoryProperties2(phys_, &mem_props2);
         mem_props_ = mem_props2.memoryProperties;
 
         VkPhysicalDeviceIDProperties id_props {};
@@ -244,7 +268,7 @@ bool WebProducerDevice::PickPhysicalDevice() {
         VkPhysicalDeviceProperties2 props2 {};
         props2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
         props2.pNext = &id_props;
-        vkGetPhysicalDeviceProperties2(phys_, &props2);
+        instance_dispatch_.vkGetPhysicalDeviceProperties2(phys_, &props2);
         std::memcpy(device_uuid_, id_props.deviceUUID, 16);
         std::memcpy(driver_uuid_, id_props.driverUUID, 16);
         return true;
@@ -289,17 +313,24 @@ bool WebProducerDevice::CreateDevice() {
     ci.enabledExtensionCount   = static_cast<uint32_t>(std::size(dev_exts));
     ci.ppEnabledExtensionNames = dev_exts;
 
-    VK_CHECK(vkCreateDevice(phys_, &ci, nullptr, &device_));
-    vkGetDeviceQueue(device_, queue_family_, 0, &queue_);
-
-    pfn_GetMemoryFdProperties_ = reinterpret_cast<PFN_vkGetMemoryFdPropertiesKHR>(
-        vkGetDeviceProcAddr(device_, "vkGetMemoryFdPropertiesKHR"));
-    pfn_GetSemaphoreFd_ = reinterpret_cast<PFN_vkGetSemaphoreFdKHR>(
-        vkGetDeviceProcAddr(device_, "vkGetSemaphoreFdKHR"));
-    if (! pfn_GetMemoryFdProperties_ || ! pfn_GetSemaphoreFd_) {
-        std::fprintf(stderr, "WebProducerDevice: required PFN_* missing\n");
+    auto created =
+        vvk::Device::Create(device_owner_, phys_, instance_dispatch_, ci, device_dispatch_);
+    if (created.is_err()) {
+        const auto error = created.unwrap_err_unchecked();
+        std::fprintf(stderr,
+                     "WebProducerDevice: device creation failed (%s, VkResult=%d)\n",
+                     error.command ? error.command : "dispatch",
+                     static_cast<int>(error.api_result));
         return false;
     }
+    device_ = *device_owner_;
+    device_dispatch_.vkGetDeviceQueue(device_, queue_family_, 0, &queue_);
+    auto allocated = vvk::MemoryAllocator::Create(phys_, instance_dispatch_, device_dispatch_);
+    if (allocated.is_err()) {
+        std::fprintf(stderr, "WebProducerDevice: allocator creation failed\n");
+        return false;
+    }
+    allocator_ = allocated.unwrap_unchecked();
     return true;
 }
 
@@ -308,14 +339,14 @@ bool WebProducerDevice::CreateCommandPool() {
     ci.sType            = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
     ci.flags            = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
     ci.queueFamilyIndex = queue_family_;
-    VK_CHECK(vkCreateCommandPool(device_, &ci, nullptr, &cmd_pool_));
+    VK_CHECK(device_dispatch_.vkCreateCommandPool(device_, &ci, nullptr, &cmd_pool_));
 
     VkCommandBufferAllocateInfo ai {};
     ai.sType              = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
     ai.commandPool        = cmd_pool_;
     ai.level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
     ai.commandBufferCount = 1;
-    VK_CHECK(vkAllocateCommandBuffers(device_, &ai, &blit_cmd_));
+    VK_CHECK(device_dispatch_.vkAllocateCommandBuffers(device_, &ai, &blit_cmd_));
     return true;
 }
 
@@ -323,7 +354,7 @@ bool WebProducerDevice::CreateSyncObjects() {
     VkFenceCreateInfo fi {};
     fi.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
     fi.flags = VK_FENCE_CREATE_SIGNALED_BIT;
-    VK_CHECK(vkCreateFence(device_, &fi, nullptr, &blit_fence_));
+    VK_CHECK(device_dispatch_.vkCreateFence(device_, &fi, nullptr, &blit_fence_));
 
     VkExportSemaphoreCreateInfo exp_si {};
     exp_si.sType       = VK_STRUCTURE_TYPE_EXPORT_SEMAPHORE_CREATE_INFO;
@@ -332,34 +363,14 @@ bool WebProducerDevice::CreateSyncObjects() {
     VkSemaphoreCreateInfo si {};
     si.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
     si.pNext = &exp_si;
-    VK_CHECK(vkCreateSemaphore(device_, &si, nullptr, &blit_sem_));
+    VK_CHECK(device_dispatch_.vkCreateSemaphore(device_, &si, nullptr, &blit_sem_));
     return true;
 }
 
-uint32_t WebProducerDevice::FindMemoryType(uint32_t bits, VkMemoryPropertyFlags props) const {
-    for (uint32_t i = 0; i < mem_props_.memoryTypeCount; ++i) {
-        if ((bits & (1u << i)) && (mem_props_.memoryTypes[i].propertyFlags & props) == props) {
-            return i;
-        }
-    }
-    return UINT32_MAX;
-}
-
 void WebProducerDevice::DestroyCpuUploadResources() {
-    if (cpu_staging_memory_ && cpu_staging_map_) {
-        vkUnmapMemory(device_, cpu_staging_memory_);
-        cpu_staging_map_ = nullptr;
-    }
-    if (cpu_staging_buffer_) {
-        vkDestroyBuffer(device_, cpu_staging_buffer_, nullptr);
-        cpu_staging_buffer_ = VK_NULL_HANDLE;
-    }
-    if (cpu_staging_memory_) {
-        vkFreeMemory(device_, cpu_staging_memory_, nullptr);
-        cpu_staging_memory_ = VK_NULL_HANDLE;
-    }
-    cpu_staging_size_     = 0;
-    cpu_staging_coherent_ = false;
+    cpu_staging_mapping_ = rstd::None();
+    cpu_staging_buffer_.reset();
+    cpu_staging_size_ = 0;
 }
 
 bool WebProducerDevice::EnsureCpuUploadResources(const ::weweb::CpuPaintFrame& frame) {
@@ -367,9 +378,10 @@ bool WebProducerDevice::EnsureCpuUploadResources(const ::weweb::CpuPaintFrame& f
     const VkDeviceSize need =
         static_cast<VkDeviceSize>(frame.width) * static_cast<VkDeviceSize>(frame.height) * 4u;
     if (need == 0) return false;
-    if (cpu_staging_buffer_ && cpu_staging_size_ >= need) return true;
+    if (cpu_staging_buffer_.valid() && cpu_staging_size_ >= need) return true;
 
-    if (vkWaitForFences(device_, 1, &blit_fence_, VK_TRUE, kFenceTimeoutNs) != VK_SUCCESS) {
+    if (device_dispatch_.vkWaitForFences(device_, 1, &blit_fence_, VK_TRUE, kFenceTimeoutNs) !=
+        VK_SUCCESS) {
         std::fprintf(stderr, "WebProducerDevice: CPU upload fence wait timed out\n");
         return false;
     }
@@ -380,64 +392,36 @@ bool WebProducerDevice::EnsureCpuUploadResources(const ::weweb::CpuPaintFrame& f
     bi.size        = need;
     bi.usage       = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
     bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    if (vkCreateBuffer(device_, &bi, nullptr, &cpu_staging_buffer_) != VK_SUCCESS) {
-        std::fprintf(stderr, "WebProducerDevice: vkCreateBuffer(cpu staging) failed\n");
+    auto allocated = allocator_.create_buffer(bi, vvk::MemoryRequest::Upload());
+    if (allocated.is_err()) {
+        std::fprintf(stderr, "WebProducerDevice: staging allocation failed\n");
         return false;
     }
-
-    VkMemoryRequirements mr {};
-    vkGetBufferMemoryRequirements(device_, cpu_staging_buffer_, &mr);
-    uint32_t mtype =
-        FindMemoryType(mr.memoryTypeBits,
-                       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-    if (mtype == UINT32_MAX) {
-        mtype = FindMemoryType(mr.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
-    }
-    if (mtype == UINT32_MAX) {
-        std::fprintf(stderr, "WebProducerDevice: no host-visible staging memory type\n");
+    cpu_staging_buffer_ = allocated.unwrap_unchecked();
+    auto mapped         = cpu_staging_buffer_.allocation().map();
+    if (mapped.is_err()) {
+        std::fprintf(stderr, "WebProducerDevice: staging mapping failed\n");
         DestroyCpuUploadResources();
         return false;
     }
-
-    VkMemoryAllocateInfo ai {};
-    ai.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    ai.allocationSize  = mr.size;
-    ai.memoryTypeIndex = mtype;
-    if (vkAllocateMemory(device_, &ai, nullptr, &cpu_staging_memory_) != VK_SUCCESS) {
-        std::fprintf(stderr, "WebProducerDevice: vkAllocateMemory(cpu staging) failed\n");
-        DestroyCpuUploadResources();
-        return false;
-    }
-    if (vkBindBufferMemory(device_, cpu_staging_buffer_, cpu_staging_memory_, 0) != VK_SUCCESS) {
-        std::fprintf(stderr, "WebProducerDevice: vkBindBufferMemory(cpu staging) failed\n");
-        DestroyCpuUploadResources();
-        return false;
-    }
-    if (vkMapMemory(device_, cpu_staging_memory_, 0, VK_WHOLE_SIZE, 0, &cpu_staging_map_) !=
-        VK_SUCCESS) {
-        std::fprintf(stderr, "WebProducerDevice: vkMapMemory(cpu staging) failed\n");
-        DestroyCpuUploadResources();
-        return false;
-    }
-
-    cpu_staging_size_ = mr.size;
-    cpu_staging_coherent_ =
-        (mem_props_.memoryTypes[mtype].propertyFlags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) != 0;
+    cpu_staging_mapping_ = rstd::Some(mapped.unwrap_unchecked());
+    cpu_staging_size_    = need;
     return true;
 }
 
 bool WebProducerDevice::BeginTransferCommands(const char* op) {
-    if (vkWaitForFences(device_, 1, &blit_fence_, VK_TRUE, kFenceTimeoutNs) != VK_SUCCESS) {
+    if (device_dispatch_.vkWaitForFences(device_, 1, &blit_fence_, VK_TRUE, kFenceTimeoutNs) !=
+        VK_SUCCESS) {
         std::fprintf(stderr, "WebProducerDevice: prior %s fence wait timed out\n", op);
         return false;
     }
-    vkResetFences(device_, 1, &blit_fence_);
-    vkResetCommandBuffer(blit_cmd_, 0);
+    device_dispatch_.vkResetFences(device_, 1, &blit_fence_);
+    device_dispatch_.vkResetCommandBuffer(blit_cmd_, 0);
 
     VkCommandBufferBeginInfo bi {};
     bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    if (vkBeginCommandBuffer(blit_cmd_, &bi) != VK_SUCCESS) {
+    if (device_dispatch_.vkBeginCommandBuffer(blit_cmd_, &bi) != VK_SUCCESS) {
         std::fprintf(stderr, "WebProducerDevice: vkBeginCommandBuffer(%s) failed\n", op);
         RestoreTransferFence();
         return false;
@@ -447,17 +431,17 @@ bool WebProducerDevice::BeginTransferCommands(const char* op) {
 
 void WebProducerDevice::RestoreTransferFence() {
     if (blit_fence_) {
-        vkDestroyFence(device_, blit_fence_, nullptr);
+        device_dispatch_.vkDestroyFence(device_, blit_fence_, nullptr);
         blit_fence_ = VK_NULL_HANDLE;
     }
     VkFenceCreateInfo fi {};
     fi.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
     fi.flags = VK_FENCE_CREATE_SIGNALED_BIT;
-    (void)vkCreateFence(device_, &fi, nullptr, &blit_fence_);
+    (void)device_dispatch_.vkCreateFence(device_, &fi, nullptr, &blit_fence_);
 }
 
 int WebProducerDevice::SubmitTransferCommands(const char* op, bool wait_for_completion) {
-    if (vkEndCommandBuffer(blit_cmd_) != VK_SUCCESS) {
+    if (device_dispatch_.vkEndCommandBuffer(blit_cmd_) != VK_SUCCESS) {
         std::fprintf(stderr, "WebProducerDevice: vkEndCommandBuffer(%s) failed\n", op);
         RestoreTransferFence();
         return -1;
@@ -469,7 +453,7 @@ int WebProducerDevice::SubmitTransferCommands(const char* op, bool wait_for_comp
     submit.pCommandBuffers      = &blit_cmd_;
     submit.signalSemaphoreCount = 1;
     submit.pSignalSemaphores    = &blit_sem_;
-    if (vkQueueSubmit(queue_, 1, &submit, blit_fence_) != VK_SUCCESS) {
+    if (device_dispatch_.vkQueueSubmit(queue_, 1, &submit, blit_fence_) != VK_SUCCESS) {
         std::fprintf(stderr, "WebProducerDevice: vkQueueSubmit(%s) failed\n", op);
         RestoreTransferFence();
         return -1;
@@ -481,14 +465,14 @@ int WebProducerDevice::SubmitTransferCommands(const char* op, bool wait_for_comp
     gi.handleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT;
 
     int sync_fd = -1;
-    if (pfn_GetSemaphoreFd_(device_, &gi, &sync_fd) != VK_SUCCESS || sync_fd < 0) {
+    if (device_dispatch_.vkGetSemaphoreFdKHR(device_, &gi, &sync_fd) != VK_SUCCESS || sync_fd < 0) {
         std::fprintf(stderr, "WebProducerDevice: vkGetSemaphoreFdKHR after %s failed\n", op);
-        vkWaitForFences(device_, 1, &blit_fence_, VK_TRUE, kFenceTimeoutNs);
+        device_dispatch_.vkWaitForFences(device_, 1, &blit_fence_, VK_TRUE, kFenceTimeoutNs);
         return -1;
     }
 
     if (wait_for_completion) {
-        vkWaitForFences(device_, 1, &blit_fence_, VK_TRUE, kFenceTimeoutNs);
+        device_dispatch_.vkWaitForFences(device_, 1, &blit_fence_, VK_TRUE, kFenceTimeoutNs);
     }
     return sync_fd;
 }
@@ -507,7 +491,7 @@ WebProducerDevice::ImportedFrame WebProducerDevice::Import(const ::weweb::DmaBuf
 
     VkMemoryFdPropertiesKHR fd_props {};
     fd_props.sType = VK_STRUCTURE_TYPE_MEMORY_FD_PROPERTIES_KHR;
-    if (pfn_GetMemoryFdProperties_(
+    if (device_dispatch_.vkGetMemoryFdPropertiesKHR(
             device_, VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT, dup_fd, &fd_props) !=
         VK_SUCCESS) {
         std::fprintf(stderr, "WebProducerDevice: vkGetMemoryFdPropertiesKHR failed\n");
@@ -556,14 +540,14 @@ WebProducerDevice::ImportedFrame WebProducerDevice::Import(const ::weweb::DmaBuf
     ii.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 
     VkImage img = VK_NULL_HANDLE;
-    if (vkCreateImage(device_, &ii, nullptr, &img) != VK_SUCCESS) {
+    if (device_dispatch_.vkCreateImage(device_, &ii, nullptr, &img) != VK_SUCCESS) {
         std::fprintf(stderr, "WebProducerDevice: vkCreateImage(import) failed\n");
         ::close(dup_fd);
         return imp;
     }
 
     VkMemoryRequirements mr {};
-    vkGetImageMemoryRequirements(device_, img, &mr);
+    device_dispatch_.vkGetImageMemoryRequirements(device_, img, &mr);
 
     uint32_t allowed = mr.memoryTypeBits & fd_props.memoryTypeBits;
     uint32_t mtype   = UINT32_MAX;
@@ -575,7 +559,7 @@ WebProducerDevice::ImportedFrame WebProducerDevice::Import(const ::weweb::DmaBuf
     }
     if (mtype == UINT32_MAX) {
         std::fprintf(stderr, "WebProducerDevice: no compatible memory type for DMA-BUF\n");
-        vkDestroyImage(device_, img, nullptr);
+        device_dispatch_.vkDestroyImage(device_, img, nullptr);
         ::close(dup_fd);
         return imp;
     }
@@ -597,19 +581,21 @@ WebProducerDevice::ImportedFrame WebProducerDevice::Import(const ::weweb::DmaBuf
     mi.memoryTypeIndex = mtype;
 
     VkDeviceMemory mem = VK_NULL_HANDLE;
-    if (VkResult ar = vkAllocateMemory(device_, &mi, nullptr, &mem); ar != VK_SUCCESS) {
+    if (VkResult ar = device_dispatch_.vkAllocateMemory(device_, &mi, nullptr, &mem);
+        ar != VK_SUCCESS) {
         std::fprintf(
             stderr, "WebProducerDevice: vkAllocateMemory(import)=%d\n", static_cast<int>(ar));
-        vkDestroyImage(device_, img, nullptr);
+        device_dispatch_.vkDestroyImage(device_, img, nullptr);
         ::close(dup_fd);
         return imp;
     }
     // From here Vulkan owns dup_fd; no manual close.
 
-    if (vkBindImageMemory(device_, img, mem, frame.planes[0].offset) != VK_SUCCESS) {
+    if (device_dispatch_.vkBindImageMemory(device_, img, mem, frame.planes[0].offset) !=
+        VK_SUCCESS) {
         std::fprintf(stderr, "WebProducerDevice: vkBindImageMemory(import) failed\n");
-        vkFreeMemory(device_, mem, nullptr);
-        vkDestroyImage(device_, img, nullptr);
+        device_dispatch_.vkFreeMemory(device_, mem, nullptr);
+        device_dispatch_.vkDestroyImage(device_, img, nullptr);
         return imp;
     }
 
@@ -623,8 +609,8 @@ WebProducerDevice::ImportedFrame WebProducerDevice::Import(const ::weweb::DmaBuf
 }
 
 void WebProducerDevice::DestroyImported(ImportedFrame& imp) {
-    if (imp.image) vkDestroyImage(device_, imp.image, nullptr);
-    if (imp.memory) vkFreeMemory(device_, imp.memory, nullptr);
+    if (imp.image) device_dispatch_.vkDestroyImage(device_, imp.image, nullptr);
+    if (imp.memory) device_dispatch_.vkFreeMemory(device_, imp.memory, nullptr);
     imp = {};
 }
 
@@ -649,15 +635,14 @@ int WebProducerDevice::UploadToSlot(const ::weweb::CpuPaintFrame& frame, VkImage
         return -1;
     }
     if (! EnsureCpuUploadResources(frame)) return -1;
-    if (! CopyCpuPaintToStaging(frame, slot_format, cpu_staging_map_)) return -1;
-    if (! cpu_staging_coherent_) {
-        VkMappedMemoryRange range {};
-        range.sType  = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE;
-        range.memory = cpu_staging_memory_;
-        range.offset = 0;
-        range.size   = VK_WHOLE_SIZE;
-        vkFlushMappedMemoryRanges(device_, 1, &range);
-    }
+    // A previous upload can still read the persistent mapping even when capacity is reused.
+    if (device_dispatch_.vkWaitForFences(device_, 1, &blit_fence_, VK_TRUE, kFenceTimeoutNs) !=
+        VK_SUCCESS)
+        return -1;
+    if (! CopyCpuPaintToStaging(
+            frame, slot_format, cpu_staging_mapping_.as_ref().unwrap_unchecked().data()))
+        return -1;
+    if (cpu_staging_buffer_.allocation().flush().is_err()) return -1;
 
     if (! BeginTransferCommands("cpu-paint")) return -1;
 
@@ -673,16 +658,16 @@ int WebProducerDevice::UploadToSlot(const ::weweb::CpuPaintFrame& frame, VkImage
     b_dst.subresourceRange.layerCount = 1;
     b_dst.srcAccessMask               = 0;
     b_dst.dstAccessMask               = VK_ACCESS_TRANSFER_WRITE_BIT;
-    vkCmdPipelineBarrier(blit_cmd_,
-                         VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-                         VK_PIPELINE_STAGE_TRANSFER_BIT,
-                         0,
-                         0,
-                         nullptr,
-                         0,
-                         nullptr,
-                         1,
-                         &b_dst);
+    device_dispatch_.vkCmdPipelineBarrier(blit_cmd_,
+                                          VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                                          VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                          0,
+                                          0,
+                                          nullptr,
+                                          0,
+                                          nullptr,
+                                          1,
+                                          &b_dst);
 
     VkBufferImageCopy copy {};
     copy.bufferOffset                    = 0;
@@ -692,8 +677,12 @@ int WebProducerDevice::UploadToSlot(const ::weweb::CpuPaintFrame& frame, VkImage
     copy.imageSubresource.layerCount     = 1;
     copy.imageOffset                     = { 0, 0, 0 };
     copy.imageExtent                     = { slot_extent.width, slot_extent.height, 1 };
-    vkCmdCopyBufferToImage(
-        blit_cmd_, cpu_staging_buffer_, slot_image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+    device_dispatch_.vkCmdCopyBufferToImage(blit_cmd_,
+                                            cpu_staging_buffer_.handle(),
+                                            slot_image,
+                                            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                            1,
+                                            &copy);
 
     VkImageMemoryBarrier b_release {};
     b_release.sType                       = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
@@ -707,16 +696,16 @@ int WebProducerDevice::UploadToSlot(const ::weweb::CpuPaintFrame& frame, VkImage
     b_release.subresourceRange.layerCount = 1;
     b_release.srcAccessMask               = VK_ACCESS_TRANSFER_WRITE_BIT;
     b_release.dstAccessMask               = 0;
-    vkCmdPipelineBarrier(blit_cmd_,
-                         VK_PIPELINE_STAGE_TRANSFER_BIT,
-                         VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
-                         0,
-                         0,
-                         nullptr,
-                         0,
-                         nullptr,
-                         1,
-                         &b_release);
+    device_dispatch_.vkCmdPipelineBarrier(blit_cmd_,
+                                          VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                          VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+                                          0,
+                                          0,
+                                          nullptr,
+                                          0,
+                                          nullptr,
+                                          1,
+                                          &b_release);
 
     return SubmitTransferCommands("cpu-paint", /*wait_for_completion=*/false);
 }
@@ -725,17 +714,18 @@ int WebProducerDevice::BlitToSlot(const ImportedFrame& imp, VkImage slot_image,
                                   VkExtent2D slot_extent) {
     if (! imp.ok || imp.image == VK_NULL_HANDLE || slot_image == VK_NULL_HANDLE) return -1;
 
-    if (vkWaitForFences(device_, 1, &blit_fence_, VK_TRUE, kFenceTimeoutNs) != VK_SUCCESS) {
+    if (device_dispatch_.vkWaitForFences(device_, 1, &blit_fence_, VK_TRUE, kFenceTimeoutNs) !=
+        VK_SUCCESS) {
         std::fprintf(stderr, "WebProducerDevice: prior blit fence wait timed out\n");
         return -1;
     }
-    vkResetFences(device_, 1, &blit_fence_);
-    vkResetCommandBuffer(blit_cmd_, 0);
+    device_dispatch_.vkResetFences(device_, 1, &blit_fence_);
+    device_dispatch_.vkResetCommandBuffer(blit_cmd_, 0);
 
     VkCommandBufferBeginInfo bi {};
     bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    if (vkBeginCommandBuffer(blit_cmd_, &bi) != VK_SUCCESS) return -1;
+    if (device_dispatch_.vkBeginCommandBuffer(blit_cmd_, &bi) != VK_SUCCESS) return -1;
 
     // imp.image: UNDEFINED → TRANSFER_SRC.
     VkImageMemoryBarrier b_src {};
@@ -750,16 +740,16 @@ int WebProducerDevice::BlitToSlot(const ImportedFrame& imp, VkImage slot_image,
     b_src.subresourceRange.layerCount = 1;
     b_src.srcAccessMask               = 0;
     b_src.dstAccessMask               = VK_ACCESS_TRANSFER_READ_BIT;
-    vkCmdPipelineBarrier(blit_cmd_,
-                         VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-                         VK_PIPELINE_STAGE_TRANSFER_BIT,
-                         0,
-                         0,
-                         nullptr,
-                         0,
-                         nullptr,
-                         1,
-                         &b_src);
+    device_dispatch_.vkCmdPipelineBarrier(blit_cmd_,
+                                          VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                                          VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                          0,
+                                          0,
+                                          nullptr,
+                                          0,
+                                          nullptr,
+                                          1,
+                                          &b_src);
 
     // slot_image: UNDEFINED → TRANSFER_DST. Bridge slot's prior layout
     // is FOREIGN-released by the consumer and the spec lets us treat
@@ -771,16 +761,16 @@ int WebProducerDevice::BlitToSlot(const ImportedFrame& imp, VkImage slot_image,
     b_dst.image                = slot_image;
     b_dst.srcAccessMask        = 0;
     b_dst.dstAccessMask        = VK_ACCESS_TRANSFER_WRITE_BIT;
-    vkCmdPipelineBarrier(blit_cmd_,
-                         VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-                         VK_PIPELINE_STAGE_TRANSFER_BIT,
-                         0,
-                         0,
-                         nullptr,
-                         0,
-                         nullptr,
-                         1,
-                         &b_dst);
+    device_dispatch_.vkCmdPipelineBarrier(blit_cmd_,
+                                          VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                                          VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                          0,
+                                          0,
+                                          nullptr,
+                                          0,
+                                          nullptr,
+                                          1,
+                                          &b_dst);
 
     VkImageBlit blit {};
     blit.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
@@ -793,14 +783,14 @@ int WebProducerDevice::BlitToSlot(const ImportedFrame& imp, VkImage slot_image,
     blit.dstOffsets[1] = { static_cast<int32_t>(slot_extent.width),
                            static_cast<int32_t>(slot_extent.height),
                            1 };
-    vkCmdBlitImage(blit_cmd_,
-                   imp.image,
-                   VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                   slot_image,
-                   VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                   1,
-                   &blit,
-                   VK_FILTER_LINEAR);
+    device_dispatch_.vkCmdBlitImage(blit_cmd_,
+                                    imp.image,
+                                    VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                                    slot_image,
+                                    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                    1,
+                                    &blit,
+                                    VK_FILTER_LINEAR);
 
     // slot_image: TRANSFER_DST → GENERAL, releasing queue ownership to
     // VK_QUEUE_FAMILY_FOREIGN_EXT so the non-Vulkan consumer (KMS /
@@ -818,18 +808,18 @@ int WebProducerDevice::BlitToSlot(const ImportedFrame& imp, VkImage slot_image,
     b_release.subresourceRange.layerCount = 1;
     b_release.srcAccessMask               = VK_ACCESS_TRANSFER_WRITE_BIT;
     b_release.dstAccessMask               = 0;
-    vkCmdPipelineBarrier(blit_cmd_,
-                         VK_PIPELINE_STAGE_TRANSFER_BIT,
-                         VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
-                         0,
-                         0,
-                         nullptr,
-                         0,
-                         nullptr,
-                         1,
-                         &b_release);
+    device_dispatch_.vkCmdPipelineBarrier(blit_cmd_,
+                                          VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                          VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+                                          0,
+                                          0,
+                                          nullptr,
+                                          0,
+                                          nullptr,
+                                          1,
+                                          &b_release);
 
-    if (vkEndCommandBuffer(blit_cmd_) != VK_SUCCESS) return -1;
+    if (device_dispatch_.vkEndCommandBuffer(blit_cmd_) != VK_SUCCESS) return -1;
 
     VkSubmitInfo submit {};
     submit.sType                = VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -837,7 +827,7 @@ int WebProducerDevice::BlitToSlot(const ImportedFrame& imp, VkImage slot_image,
     submit.pCommandBuffers      = &blit_cmd_;
     submit.signalSemaphoreCount = 1;
     submit.pSignalSemaphores    = &blit_sem_;
-    if (vkQueueSubmit(queue_, 1, &submit, blit_fence_) != VK_SUCCESS) {
+    if (device_dispatch_.vkQueueSubmit(queue_, 1, &submit, blit_fence_) != VK_SUCCESS) {
         std::fprintf(stderr, "WebProducerDevice: vkQueueSubmit(blit) failed\n");
         return -1;
     }
@@ -852,18 +842,18 @@ int WebProducerDevice::BlitToSlot(const ImportedFrame& imp, VkImage slot_image,
     gi.handleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT;
 
     int sync_fd = -1;
-    if (pfn_GetSemaphoreFd_(device_, &gi, &sync_fd) != VK_SUCCESS || sync_fd < 0) {
+    if (device_dispatch_.vkGetSemaphoreFdKHR(device_, &gi, &sync_fd) != VK_SUCCESS || sync_fd < 0) {
         std::fprintf(stderr, "WebProducerDevice: vkGetSemaphoreFdKHR failed\n");
         // Still need to wait the fence so the temp image is safe to
         // destroy on caller's `DestroyImported`.
-        vkWaitForFences(device_, 1, &blit_fence_, VK_TRUE, kFenceTimeoutNs);
+        device_dispatch_.vkWaitForFences(device_, 1, &blit_fence_, VK_TRUE, kFenceTimeoutNs);
         return -1;
     }
 
     // CEF reclaims the input dma-buf when the OnAcceleratedPaint
     // callback returns, so the GPU MUST be done reading the imported
     // VkImage before this function unwinds. CPU-block on the fence.
-    vkWaitForFences(device_, 1, &blit_fence_, VK_TRUE, kFenceTimeoutNs);
+    device_dispatch_.vkWaitForFences(device_, 1, &blit_fence_, VK_TRUE, kFenceTimeoutNs);
     return sync_fd;
 }
 

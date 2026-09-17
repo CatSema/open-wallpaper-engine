@@ -116,7 +116,6 @@ std::vector<VkDeviceQueueCreateInfo> Device::ChooseDeviceQueue(VkSurfaceKHR surf
 
 bool Device::Create(Instance& inst, std::span<const Extension> exts, VkExtent2D extent,
                     Device& device) {
-    device.dld                    = vvk::DeviceDispatch { inst.inst().Dispatch() };
     device.m_instance             = *inst.inst();
     device.m_instance_api_version = inst.api_version();
     device.m_gpu                  = inst.gpu();
@@ -142,6 +141,7 @@ bool Device::Create(Instance& inst, std::span<const Extension> exts, VkExtent2D 
         tested_exts.begin(), tested_exts.end(), tested_exts_c.begin(), [](const auto& s) {
             return s.c_str();
         });
+    device.m_instance_dispatch = &inst.inst().Dispatch();
     device.m_enabled_device_extensions.assign(tested_exts.begin(), tested_exts.end());
     bool rq_surface = ! inst.offscreen();
 
@@ -214,16 +214,26 @@ bool Device::Create(Instance& inst, std::span<const Extension> exts, VkExtent2D 
     };
     enabled_timeline.pNext = &enabled_ycbcr;
 
-    auto queue_create_infos = device.ChooseDeviceQueue(*inst.surface());
-    VVK_CHECK_BOOL_RE(vvk::Device::Create(
-        device.m_device,
-        *device.m_gpu,
-        rstd::slice<VkDeviceQueueCreateInfo>::from_raw_parts(queue_create_infos.data(),
-                                                             usize(queue_create_infos.size())),
-        rstd::slice<const char*>::from_raw_parts(tested_exts_c.data(), usize(tested_exts_c.size())),
-        &enabled_timeline,
-        device.dld,
-        &enabled));
+    auto               queue_create_infos = device.ChooseDeviceQueue(*inst.surface());
+    VkDeviceCreateInfo device_info {
+        .sType                   = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+        .pNext                   = &enabled_timeline,
+        .queueCreateInfoCount    = static_cast<rstd::uint32_t>(queue_create_infos.size()),
+        .pQueueCreateInfos       = queue_create_infos.data(),
+        .enabledExtensionCount   = static_cast<rstd::uint32_t>(tested_exts_c.size()),
+        .ppEnabledExtensionNames = tested_exts_c.data(),
+        .pEnabledFeatures        = &enabled,
+    };
+    auto created = vvk::Device::Create(
+        device.m_device, *device.m_gpu, inst.inst().Dispatch(), device_info, device.dld);
+    if (created.is_err()) {
+        const auto error = created.unwrap_err_unchecked();
+        rstd_error("device creation failed: kind={}, vk={}, command={}",
+                   static_cast<int>(error.kind),
+                   static_cast<int>(error.api_result),
+                   error.command ? error.command : "");
+        return false;
+    }
 
     device.m_graphics_queue.handle = device.m_device.GetQueue(device.m_graphics_queue.family_index);
     device.m_present_queue.handle  = device.m_device.GetQueue(device.m_present_queue.family_index);
@@ -275,12 +285,16 @@ bool Device::Create(Instance& inst, std::span<const Extension> exts, VkExtent2D 
         VVK_CHECK_BOOL_RE(device.m_device.CreateCommandPool(info, device.m_command_pool));
     }
     {
-        VmaAllocatorCreateInfo allocatorInfo = {};
-        allocatorInfo.vulkanApiVersion       = device.m_instance_api_version;
-        allocatorInfo.physicalDevice         = *device.m_gpu;
-        allocatorInfo.device                 = *device.m_device;
-        allocatorInfo.instance               = *inst.inst();
-        VVK_CHECK_BOOL_RE(vvk::CreateVmaAllocator(allocatorInfo, device.m_allocator));
+        auto allocator =
+            vvk::MemoryAllocator::Create(*device.m_gpu, inst.inst().Dispatch(), device.dld);
+        if (allocator.is_err()) {
+            const auto error = allocator.unwrap_err_unchecked();
+            rstd_error("memory allocator creation failed: kind={}, vk={}",
+                       static_cast<int>(error.kind),
+                       static_cast<int>(error.api_result));
+            return false;
+        }
+        device.m_allocator = allocator.unwrap_unchecked();
     }
     return true;
 }
@@ -288,15 +302,11 @@ bool Device::Create(Instance& inst, std::span<const Extension> exts, VkExtent2D 
 VkDeviceSize Device::GetUsage() const { return MemoryBudget().usage; }
 
 auto Device::MemoryBudget() const -> MemoryBudgetSnapshot {
-    auto properties = m_gpu.GetMemoryProperties().memoryProperties;
-    rstd::array<VmaBudget, std::extent_v<decltype(properties.memoryHeaps)>> budgets {};
-    vmaGetHeapBudgets(*m_allocator, budgets.data());
+    const auto           budgets = m_allocator.budget();
     MemoryBudgetSnapshot snapshot;
-    for (rstd::uint32_t index = 0; index < properties.memoryHeapCount; ++index) {
-        auto budget_index = usize(index);
-        snapshot.usage += budgets[budget_index].usage;
-        snapshot.budget += budgets[budget_index].budget != 0 ? budgets[budget_index].budget
-                                                             : properties.memoryHeaps[index].size;
+    for (rstd::uint32_t index = 0; index < budgets.heap_count; ++index) {
+        snapshot.usage += budgets.heaps[index].usage;
+        snapshot.budget += budgets.heaps[index].budget;
     }
     return snapshot;
 }

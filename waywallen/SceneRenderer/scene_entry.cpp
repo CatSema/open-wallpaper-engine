@@ -10,11 +10,13 @@ module;
 
 #include <sys/prctl.h>
 #include <sys/socket.h>
+#define VK_NO_PROTOTYPES
 #include <vulkan/vulkan.h>
 
 module waywallen.scene_entry;
 
 import rstd;
+import vvk;
 import rstd.argparse;
 import rstd.cppstd;
 import rstd.log;
@@ -411,21 +413,27 @@ bool resolve_render_node_to_uuid(const std::string&                 path,
     ici.pApplicationInfo        = &app;
     ici.enabledExtensionCount   = 0;
     ici.ppEnabledExtensionNames = nullptr;
-    VkInstance inst             = VK_NULL_HANDLE;
-    if (vkCreateInstance(&ici, nullptr, &inst) != VK_SUCCESS) {
-        err_msg = "vkCreateInstance failed";
+    auto loaded                 = vvk::VulkanLoader::Open();
+    if (loaded.is_err()) {
+        err_msg = "Vulkan loader open failed";
         return false;
     }
+    auto                  loader = loaded.unwrap_unchecked();
+    vvk::InstanceDispatch dispatch {};
+    vvk::Instance         instance;
+    if (vvk::Instance::Create(instance, loader.global(), ici, dispatch).is_err()) {
+        err_msg = "Vulkan instance creation failed";
+        return false;
+    }
+    const VkInstance inst = *instance;
 
     ww_bridge_vk_dt_t dt {};
-    if (ww_bridge_vk_dt_load(&dt, vkGetInstanceProcAddr, inst) != 0) {
-        vkDestroyInstance(inst, nullptr);
+    if (ww_bridge_vk_dt_load(&dt, dispatch.resolver, inst) != 0) {
         err_msg = "ww_bridge_vk_dt_load failed";
         return false;
     }
 
     int rc = ww_bridge_vk_resolve_render_node(&dt, inst, path.c_str(), out_uuid.data());
-    vkDestroyInstance(inst, nullptr);
 
     if (rc == 0) return true;
     if (rc == -ENOENT) {
@@ -1021,12 +1029,12 @@ int run(int argc, char** argv) {
         pi.queue              = h.graphics_queue;
         pi.queue_family_index = h.graphics_queue_family;
         pi.get_instance_proc_addr =
-            reinterpret_cast<void* (*)(void*, const char*)>(vkGetInstanceProcAddr);
+            reinterpret_cast<void* (*)(void*, const char*)>(h.get_instance_proc_addr);
         pi.device_uuid = nullptr; // bridge will zero
         pi.driver_uuid = nullptr;
 
         ww_bridge_vk_dt_t dt {};
-        ww_bridge_vk_dt_load(&dt, vkGetInstanceProcAddr, h.instance);
+        ww_bridge_vk_dt_load(&dt, h.get_instance_proc_addr, h.instance);
         if (int rc = ww_bridge_vk_query_render_node(
                 &dt, h.physical_device, &pi.drm_render_major, &pi.drm_render_minor);
             rc != 0) {

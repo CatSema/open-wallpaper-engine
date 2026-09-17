@@ -288,12 +288,11 @@ Option<ExImageParameters> CreateExImage(rstd::uint32_t width, rstd::uint32_t hei
     return None();
 }
 
-inline Option<VmaImageParameters>
+inline Option<AllocatedImageParameters>
 CreateImage(const Device& device, VkExtent3D extent, rstd::uint32_t miplevel, VkFormat format,
             VkSamplerCreateInfo sampler_info, VkImageUsageFlags usage,
-            VmaMemoryUsage        mem_usage = VMA_MEMORY_USAGE_GPU_ONLY,
-            VkSampleCountFlagBits samples   = VK_SAMPLE_COUNT_1_BIT) {
-    VmaImageParameters image;
+            VkSampleCountFlagBits samples = VK_SAMPLE_COUNT_1_BIT) {
+    AllocatedImageParameters image;
     do {
         // Multisample images can't have mipmaps; force levelCount=1 and
         // restrict usage to color attachment (no transfer/sampled needed
@@ -318,11 +317,16 @@ CreateImage(const Device& device, VkExtent3D extent, rstd::uint32_t miplevel, Vk
             .queueFamilyIndexCount = 0,
             .initialLayout         = VK_IMAGE_LAYOUT_UNDEFINED,
         };
-        image.extent = info.extent;
-        VmaAllocationCreateInfo vma_info {};
-        vma_info.usage = mem_usage;
-        VVK_CHECK_ACT(break,
-                      vvk::CreateImage(device.vma_allocator(), info, vma_info, image.handle));
+        image.extent   = info.extent;
+        auto allocated = device.memory_allocator().create_image(info);
+        if (allocated.is_err()) {
+            const auto error = allocated.unwrap_err_unchecked();
+            rstd_error("image allocation failed: kind={}, vk={}",
+                       static_cast<int>(error.kind),
+                       static_cast<int>(error.api_result));
+            break;
+        }
+        image.handle = allocated.unwrap_unchecked();
 
         image.mipmap_level = miplevel;
         {
@@ -330,7 +334,7 @@ CreateImage(const Device& device, VkExtent3D extent, rstd::uint32_t miplevel, Vk
             VkImageViewCreateInfo createinfo {
                 .sType    = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
                 .pNext    = nullptr,
-                .image    = *image.handle,
+                .image    = image.handle.handle(),
                 .viewType = VK_IMAGE_VIEW_TYPE_2D,
                 .format   = format,
                 .subresourceRange =
@@ -486,8 +490,8 @@ void TextureCache::allocateCmd() {
     m_tex_cmd = vvk::CommandBuffer(m_tex_cmds[usize()], m_device.handle().Dispatch());
 }
 
-Option<VmaImageParameters> TextureCache::CreateTex(TextureKey tex_key) {
-    VmaImageParameters image_paras;
+Option<AllocatedImageParameters> TextureCache::CreateTex(TextureKey tex_key) {
+    AllocatedImageParameters image_paras;
     do {
         VkSamplerCreateInfo sam_info = GenSamplerInfo(tex_key);
         VkFormat            format   = ToVkType(tex_key.format);
@@ -515,7 +519,6 @@ Option<VmaImageParameters> TextureCache::CreateTex(TextureKey tex_key) {
                                    format,
                                    sam_info,
                                    tex_key.usage,
-                                   VMA_MEMORY_USAGE_GPU_ONLY,
                                    tex_key.samples);
             opt.is_some()) {
             image_paras = rstd::move(opt).unwrap();
@@ -681,6 +684,8 @@ MakeExternalProducerInfo(const Device& device, rstd::uint32_t width, rstd::uint3
         .api_version                 = u32(device.instance_api_version()),
         .width                       = u32(width),
         .height                      = u32(height),
+        .instance_dispatch           = &device.instance_dispatch(),
+        .device_dispatch             = &device.handle().Dispatch(),
     };
 }
 
@@ -839,9 +844,9 @@ struct TextureCache::VideoRegistry {
         if (yuv.is_some() && width <= yuv_max_width && height <= yuv_max_height) return yuv->get();
         auto next_w = std::max(width, yuv_max_width);
         auto next_h = std::max(height, yuv_max_height);
-        auto r      = wavsen::video::YuvToRgba::create(device.instance_handle(),
+        auto r      = wavsen::video::YuvToRgba::create(device.instance_dispatch(),
                                                        *device.gpu(),
-                                                       *device.handle(),
+                                                       device.handle().Dispatch(),
                                                        u32(device.graphics_queue().family_index),
                                                        *device.graphics_queue().handle,
                                                        u32(next_w),
@@ -1573,18 +1578,20 @@ bool TextureCache::UploadFontAtlasRegion(ref<TextureAllocation> texture, const r
     // Tightly-packed staging buffer for the AABB. Allocating per-call keeps
     // this code path independent of the video-tex ring; atlas pumps are
     // small (a handful of glyphs per frame) so cost is negligible.
-    const VkDeviceSize  bytes = static_cast<VkDeviceSize>(w) * h;
-    VmaBufferParameters stage;
-    if (! CreateStagingBuffer(m_device.vma_allocator(), bytes, stage)) return false;
+    const VkDeviceSize        bytes = static_cast<VkDeviceSize>(w) * h;
+    AllocatedBufferParameters stage;
+    if (! CreateStagingBuffer(m_device.memory_allocator(), bytes, stage)) return false;
 
     {
-        void* v = nullptr;
-        VVK_CHECK(stage.handle.MapMemory(&v));
-        auto* dst = static_cast<rstd::uint8_t*>(v);
+        auto memory = stage.handle.allocation();
+        auto mapped = memory.map();
+        if (mapped.is_err()) return false;
+        auto  mapping = mapped.unwrap_unchecked();
+        auto* dst     = static_cast<rstd::uint8_t*>(mapping.data());
         for (rstd::uint32_t row = 0; row < h; ++row) {
             std::memcpy(dst + row * w, atlas + (y + row) * atlas_w + x, static_cast<size_t>(w));
         }
-        stage.handle.UnMapMemory();
+        if (memory.flush().is_err()) return false;
     }
 
     if (! m_tex_cmd) allocateCmd();
@@ -1618,7 +1625,7 @@ bool TextureCache::UploadFontAtlasRegion(ref<TextureAllocation> texture, const r
         VkOffset3D { static_cast<rstd::int32_t>(x), static_cast<rstd::int32_t>(y), 0 };
     region.imageExtent = VkExtent3D { w, h, 1 };
     m_tex_cmd.CopyBufferToImage(
-        *stage.handle, ip.handle, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, region);
+        stage.handle.handle(), ip.handle, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, region);
     VkImageMemoryBarrier to_shader {
         .sType            = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
         .srcAccessMask    = VK_ACCESS_TRANSFER_WRITE_BIT,
@@ -1656,7 +1663,7 @@ TextureCache::~TextureCache() {
 
 u64 TextureCache::nextImageGeneration() { return m_next_image_generation++; }
 
-void TextureCache::AssignImageGeneration(VmaImageParameters& image) {
+void TextureCache::AssignImageGeneration(AllocatedImageParameters& image) {
     image.generation = nextImageGeneration();
 }
 

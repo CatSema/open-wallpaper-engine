@@ -29,3 +29,6 @@ workspace = true
 
 [dependencies.owe-scene]
 workspace = true
+
+[dependencies.vvk]
+workspace = true

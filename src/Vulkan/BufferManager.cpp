@@ -64,38 +64,25 @@ public:
         return page;
     }
 
-    ~BufferPage() {
-        if (m_virtual_block != VK_NULL_HANDLE) {
-            vmaClearVirtualBlock(m_virtual_block);
-            vmaDestroyVirtualBlock(m_virtual_block);
-        }
-    }
-
-    bool TryAllocate(VkDeviceSize size, VkDeviceSize alignment, VmaVirtualAllocation& allocation,
+    bool TryAllocate(VkDeviceSize size, VkDeviceSize alignment, alloc::RangeId& allocation,
                      VkDeviceSize& offset) {
-        VmaVirtualAllocationCreateInfo info {
-            .size      = size,
-            .alignment = alignment,
-        };
-        if (vmaVirtualAllocate(m_virtual_block, &info, &allocation, &offset) != VK_SUCCESS) {
-            return false;
-        }
-        ++m_live_allocations;
+        auto result = m_ranges.allocate(size, alignment);
+        if (result.is_err()) return false;
+        const auto range = result.unwrap_unchecked();
+        allocation       = range.id;
+        offset           = range.offset;
         return true;
     }
 
-    void Release(VmaVirtualAllocation allocation) {
-        if (allocation == VK_NULL_HANDLE) return;
-        vmaVirtualFree(m_virtual_block, allocation);
-        if (m_live_allocations > 0) --m_live_allocations;
-    }
+    void Release(alloc::RangeId allocation) { (void)m_ranges.deallocate(allocation); }
 
-    VkBuffer     handle() const noexcept { return *m_buffer.handle; }
+    VkBuffer     handle() const noexcept { return m_buffer.handle.handle(); }
     VkDeviceSize size() const noexcept { return m_size; }
-    bool         empty() const noexcept { return m_live_allocations == 0; }
+    bool         empty() const noexcept { return m_ranges.counters().allocation_count == 0; }
 
 private:
-    BufferPage(const Device& device, VkDeviceSize size): m_device(device), m_size(size) {}
+    BufferPage(const Device& device, VkDeviceSize size)
+        : m_device(device), m_size(size), m_ranges(size) {}
 
     bool Initialize() {
         VkBufferCreateInfo buffer_info {
@@ -103,22 +90,23 @@ private:
             .size  = m_size,
             .usage = DestinationUsage(),
         };
-        VmaAllocationCreateInfo allocation_info {};
-        allocation_info.usage = VMA_MEMORY_USAGE_GPU_ONLY;
-        m_buffer.req_size     = m_size;
-        VVK_CHECK_BOOL_RE(vvk::CreateBuffer(
-            m_device.vma_allocator(), buffer_info, allocation_info, m_buffer.handle));
-
-        VmaVirtualBlockCreateInfo virtual_info { .size = m_size };
-        VVK_CHECK_BOOL_RE(vmaCreateVirtualBlock(&virtual_info, &m_virtual_block));
+        auto buffer = m_device.memory_allocator().create_buffer(buffer_info);
+        if (buffer.is_err()) {
+            const auto error = buffer.unwrap_err_unchecked();
+            rstd_error("buffer page allocation failed: kind={}, vk={}",
+                       static_cast<int>(error.kind),
+                       static_cast<int>(error.api_result));
+            return false;
+        }
+        m_buffer.req_size = m_size;
+        m_buffer.handle   = buffer.unwrap_unchecked();
         return true;
     }
 
-    const Device&       m_device;
-    VkDeviceSize        m_size { 0 };
-    VmaBufferParameters m_buffer;
-    VmaVirtualBlock     m_virtual_block { VK_NULL_HANDLE };
-    std::size_t         m_live_allocations { 0 };
+    const Device&             m_device;
+    VkDeviceSize              m_size { 0 };
+    AllocatedBufferParameters m_buffer;
+    alloc::RangeAllocator<>   m_ranges;
 };
 
 class UploadBlock {
@@ -127,10 +115,6 @@ public:
         auto block = std::shared_ptr<UploadBlock>(new UploadBlock(device, size));
         if (! block->Initialize()) return {};
         return block;
-    }
-
-    ~UploadBlock() {
-        if (m_mapped != nullptr) m_buffer.handle.UnMapMemory();
     }
 
     void Reset() {
@@ -148,7 +132,7 @@ public:
     }
 
     void Write(VkDeviceSize offset, std::span<const rstd::uint8_t> data) {
-        auto* bytes = static_cast<rstd::uint8_t*>(m_mapped);
+        auto* bytes = static_cast<rstd::uint8_t*>(m_mapping->data());
         std::memcpy(bytes + offset, data.data(), data.size());
         m_touched_begin = std::min(m_touched_begin, offset);
         m_touched_end   = std::max(m_touched_end, offset + static_cast<VkDeviceSize>(data.size()));
@@ -156,33 +140,46 @@ public:
 
     bool Flush() const {
         if (m_touched_end <= m_touched_begin) return true;
-        VVK_CHECK_BOOL_RE(vmaFlushAllocation(m_device.vma_allocator(),
-                                             m_buffer.handle.Allocation(),
-                                             m_touched_begin,
-                                             m_touched_end - m_touched_begin));
+        auto flushed =
+            m_buffer.handle.allocation().flush(m_touched_begin, m_touched_end - m_touched_begin);
+        if (flushed.is_err()) {
+            const auto error = flushed.unwrap_err_unchecked();
+            rstd_error("upload flush failed: kind={}, vk={}",
+                       static_cast<int>(error.kind),
+                       static_cast<int>(error.api_result));
+            return false;
+        }
         return true;
     }
 
-    VkBuffer     handle() const noexcept { return *m_buffer.handle; }
+    VkBuffer     handle() const noexcept { return m_buffer.handle.handle(); }
     VkDeviceSize size() const noexcept { return m_size; }
 
 private:
     UploadBlock(const Device& device, VkDeviceSize size): m_device(device), m_size(size) {}
 
     bool Initialize() {
-        if (! CreateStagingBuffer(m_device.vma_allocator(), m_size, m_buffer)) return false;
-        VVK_CHECK_BOOL_RE(m_buffer.handle.MapMemory(&m_mapped));
+        if (! CreateStagingBuffer(m_device.memory_allocator(), m_size, m_buffer)) return false;
+        auto mapped = m_buffer.handle.allocation().map();
+        if (mapped.is_err()) {
+            const auto error = mapped.unwrap_err_unchecked();
+            rstd_error("upload mapping failed: kind={}, vk={}",
+                       static_cast<int>(error.kind),
+                       static_cast<int>(error.api_result));
+            return false;
+        }
+        m_mapping = Some(mapped.unwrap_unchecked());
         Reset();
         return true;
     }
 
-    const Device&       m_device;
-    VkDeviceSize        m_size { 0 };
-    VmaBufferParameters m_buffer;
-    void*               m_mapped { nullptr };
-    VkDeviceSize        m_cursor { 0 };
-    VkDeviceSize        m_touched_begin { 0 };
-    VkDeviceSize        m_touched_end { 0 };
+    const Device&              m_device;
+    VkDeviceSize               m_size { 0 };
+    AllocatedBufferParameters  m_buffer;
+    Option<vvk::MemoryMapping> m_mapping;
+    VkDeviceSize               m_cursor { 0 };
+    VkDeviceSize               m_touched_begin { 0 };
+    VkDeviceSize               m_touched_end { 0 };
 };
 
 struct BufferCopyOperation {
@@ -217,7 +214,7 @@ struct ImageClearOperation {
 
 struct BufferAllocation::State {
     std::shared_ptr<BufferPage> page;
-    VmaVirtualAllocation        allocation { VK_NULL_HANDLE };
+    alloc::RangeId              allocation {};
     VkDeviceSize                offset { 0 };
     VkDeviceSize                size { 0 };
     BufferUploadClass           usage { BufferUploadClass::Vertex };
@@ -273,7 +270,7 @@ BufferAllocation::BufferAllocation(BufferAllocation&&) noexcept            = def
 BufferAllocation& BufferAllocation::operator=(BufferAllocation&&) noexcept = default;
 
 BufferAllocation::operator bool() const noexcept {
-    return m_state && m_state->page && m_state->allocation != VK_NULL_HANDLE && m_state->size > 0;
+    return m_state && m_state->page && m_state->size > 0;
 }
 
 VkBuffer BufferAllocation::buffer() const noexcept {
@@ -356,7 +353,7 @@ Option<BufferAllocation> BufferManager::Allocate(const BufferAllocationRequest& 
         alignment = std::max(alignment, m_impl->device.limits().minStorageBufferOffsetAlignment);
     }
 
-    VmaVirtualAllocation        allocation { VK_NULL_HANDLE };
+    alloc::RangeId              allocation {};
     VkDeviceSize                offset { 0 };
     std::shared_ptr<BufferPage> page;
     for (const auto& candidate : m_impl->pages) {

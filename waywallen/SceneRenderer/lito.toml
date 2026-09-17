@@ -43,3 +43,6 @@ workspace = true
 
 [dependencies.rstd-std]
 workspace = true
+
+[dependencies.vvk]
+workspace = true

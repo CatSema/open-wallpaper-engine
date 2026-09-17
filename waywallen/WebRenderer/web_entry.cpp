@@ -643,12 +643,12 @@ int run(int argc, char** argv) {
     pi.queue              = producer.Queue();
     pi.queue_family_index = producer.QueueFamily();
     pi.get_instance_proc_addr =
-        reinterpret_cast<void* (*)(void*, const char*)>(vkGetInstanceProcAddr);
+        reinterpret_cast<void* (*)(void*, const char*)>(producer.InstanceDispatch().resolver);
     pi.device_uuid = producer.DeviceUuid();
     pi.driver_uuid = producer.DriverUuid();
     {
         ww_bridge_vk_dt_t dt {};
-        ww_bridge_vk_dt_load(&dt, vkGetInstanceProcAddr, producer.Instance());
+        ww_bridge_vk_dt_load(&dt, producer.InstanceDispatch().resolver, producer.Instance());
         if (int rc = ww_bridge_vk_query_render_node(
                 &dt, producer.Physical(), &pi.drm_render_major, &pi.drm_render_minor);
             rc != 0) {

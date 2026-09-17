@@ -422,8 +422,9 @@ public:
     bool supportLayer(std::string_view) const;
 
 private:
-    vvk::InstanceDispatch m_dld;
-    vvk::Instance         m_vinst;
+    Option<vvk::VulkanLoader> m_loader;
+    vvk::InstanceDispatch     m_dld;
+    vvk::Instance             m_vinst;
 
     vvk::DebugUtilsMessenger m_debug_utils;
     vvk::PhysicalDevice      m_gpu {};
@@ -444,14 +445,14 @@ struct QueueParameters {
     rstd::uint32_t family_index;
 };
 
-struct VmaBufferParameters {
-    vvk::VmaBuffer handle;
-    VkDeviceSize   req_size;
+struct AllocatedBufferParameters {
+    vvk::AllocatedBuffer handle;
+    VkDeviceSize         req_size;
 
-    VmaBufferParameters();
-    ~VmaBufferParameters();
-    VmaBufferParameters(VmaBufferParameters&& o) noexcept;
-    VmaBufferParameters& operator=(VmaBufferParameters&& o) noexcept;
+    AllocatedBufferParameters();
+    ~AllocatedBufferParameters();
+    AllocatedBufferParameters(AllocatedBufferParameters&& o) noexcept;
+    AllocatedBufferParameters& operator=(AllocatedBufferParameters&& o) noexcept;
 };
 
 struct BufferParameters {
@@ -459,22 +460,22 @@ struct BufferParameters {
     VkDeviceSize req_size;
     BufferParameters()  = default;
     ~BufferParameters() = default;
-    BufferParameters(const VmaBufferParameters& o) noexcept
-        : handle(*o.handle), req_size(o.req_size) {}
+    BufferParameters(const AllocatedBufferParameters& o) noexcept
+        : handle(o.handle.handle()), req_size(o.req_size) {}
 };
 
-struct VmaImageParameters : NoCopy {
-    vvk::VmaImage  handle;
-    vvk::ImageView view;
-    vvk::Sampler   sampler;
-    VkExtent3D     extent;
-    unsigned       mipmap_level { 1 };
-    u64            generation { 0 };
+struct AllocatedImageParameters : NoCopy {
+    vvk::AllocatedImage handle;
+    vvk::ImageView      view;
+    vvk::Sampler        sampler;
+    VkExtent3D          extent;
+    unsigned            mipmap_level { 1 };
+    u64                 generation { 0 };
 
-    VmaImageParameters();
-    ~VmaImageParameters();
-    VmaImageParameters(VmaImageParameters&& o) noexcept;
-    VmaImageParameters& operator=(VmaImageParameters&& o) noexcept;
+    AllocatedImageParameters();
+    ~AllocatedImageParameters();
+    AllocatedImageParameters(AllocatedImageParameters&& o) noexcept;
+    AllocatedImageParameters& operator=(AllocatedImageParameters&& o) noexcept;
 };
 
 struct ExImageParameters : NoCopy {
@@ -503,10 +504,10 @@ struct ExImageParameters : NoCopy {
 // `ImageParameters` itself is global-attached (defined in classic
 // Swapchain/ExSwapchain.hpp). These free helpers replace the conversion
 // ctors that used to live on it — those ctors needed module-attached
-// Vma/Ex types which can't be visible in classic purview.
-inline ImageParameters ToImageParameters(const VmaImageParameters& o) noexcept {
+// Allocated/Ex types which can't be visible in classic purview.
+inline ImageParameters ToImageParameters(const AllocatedImageParameters& o) noexcept {
     ImageParameters out;
-    out.handle       = *o.handle;
+    out.handle       = o.handle.handle();
     out.view         = *o.view;
     out.sampler      = *o.sampler;
     out.extent       = o.extent;
@@ -526,7 +527,7 @@ inline ImageParameters ToImageParameters(const ExImageParameters& o) noexcept {
 }
 
 struct ImageSlots : NoCopy {
-    std::vector<VmaImageParameters> slots;
+    std::vector<AllocatedImageParameters> slots;
 
     ImageSlots();
     ~ImageSlots();
@@ -649,10 +650,10 @@ public:
                                rstd::uint32_t w, rstd::uint32_t h);
 
 private:
-    Option<VmaImageParameters> CreateTex(TextureKey);
-    u64                        nextImageGeneration();
-    void                       AssignImageGeneration(VmaImageParameters&);
-    void                       AssignImageGeneration(ExImageParameters&);
+    Option<AllocatedImageParameters> CreateTex(TextureKey);
+    u64                              nextImageGeneration();
+    void                             AssignImageGeneration(AllocatedImageParameters&);
+    void                             AssignImageGeneration(ExImageParameters&);
     /* VIDEO-typed Image branch of AllocateImportedTexture: registers a wavsen
      * VideoDecoder + stable RGBA8 VkImage and returns an ImageSlotsRef
      * pointing at that same VkImage so material binding is transparent. */
@@ -868,6 +869,7 @@ public:
     const auto&                  device() const { return m_device; }
     const auto&                  handle() const { return m_device; }
     const auto&                  gpu() const { return m_gpu; }
+    const vvk::InstanceDispatch& instance_dispatch() const { return *m_instance_dispatch; }
     VkInstance                   instance_handle() const { return m_instance; }
     rstd::uint32_t               instance_api_version() const { return m_instance_api_version; }
     std::span<const std::string> enabled_instance_extensions() const {
@@ -877,7 +879,7 @@ public:
         return m_enabled_device_extensions;
     }
     const auto& limits() const { return m_limits; }
-    const auto& vma_allocator() const { return *m_allocator; }
+    const auto& memory_allocator() const { return m_allocator; }
     const auto& cmd_pool() const { return m_command_pool; }
     const auto& swapchain() const { return m_swapchain; }
     const auto& out_extent() const { return m_extent; }
@@ -892,12 +894,13 @@ public:
 private:
     std::vector<VkDeviceQueueCreateInfo> ChooseDeviceQueue(VkSurfaceKHR = {});
 
-    vvk::DeviceDispatch     dld;
-    VkInstance              m_instance { VK_NULL_HANDLE };
-    rstd::uint32_t          m_instance_api_version { WP_VULKAN_VERSION };
-    vvk::Device             m_device;
-    vvk::PhysicalDevice     m_gpu;
-    vvk::VmaAllocatorHandle m_allocator;
+    const vvk::InstanceDispatch* m_instance_dispatch {};
+    vvk::DeviceDispatch          dld;
+    VkInstance                   m_instance { VK_NULL_HANDLE };
+    rstd::uint32_t               m_instance_api_version { WP_VULKAN_VERSION };
+    vvk::Device                  m_device;
+    vvk::PhysicalDevice          m_gpu;
+    vvk::MemoryAllocator         m_allocator;
 
     VkPhysicalDeviceLimits   m_limits;
     DeviceCapabilities       m_capabilities;
@@ -917,8 +920,8 @@ private:
 
 // ---------- Util.hpp ----------
 
-inline bool CreateStagingBuffer(VmaAllocator allocator, VkDeviceSize size,
-                                VmaBufferParameters& buffer) {
+inline bool CreateStagingBuffer(const vvk::MemoryAllocator& allocator, VkDeviceSize size,
+                                AllocatedBufferParameters& buffer) {
     VkBufferCreateInfo ci {
         .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
         .pNext = nullptr,
@@ -927,9 +930,15 @@ inline bool CreateStagingBuffer(VmaAllocator allocator, VkDeviceSize size,
     };
     buffer.req_size = ci.size;
 
-    VmaAllocationCreateInfo vma_info = {};
-    vma_info.usage                   = VMA_MEMORY_USAGE_CPU_ONLY;
-    VVK_CHECK_BOOL_RE(vvk::CreateBuffer(allocator, ci, vma_info, buffer.handle));
+    auto allocated = allocator.create_buffer(ci, vvk::MemoryRequest::Upload());
+    if (allocated.is_err()) {
+        const auto error = allocated.unwrap_err_unchecked();
+        rstd_error("staging allocation failed: kind={}, vk={}",
+                   static_cast<int>(error.kind),
+                   static_cast<int>(error.api_result));
+        return false;
+    }
+    buffer.handle = allocated.unwrap_unchecked();
     return true;
 }
 

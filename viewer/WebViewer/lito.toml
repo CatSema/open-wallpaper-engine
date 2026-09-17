@@ -79,3 +79,7 @@ condition = 'target.os == "linux"'
 [external-dependencies.pkg-config.wayland-egl]
 workspace = true
 condition = 'target.os == "linux"'
+
+[external-dependencies.cmake.vulkan-loader]
+package = "Vulkan"
+targets = [{ name = "Vulkan::Vulkan" }]

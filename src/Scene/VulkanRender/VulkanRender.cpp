@@ -525,6 +525,7 @@ bool VulkanRender::Impl::init(RenderInitInfo info, SceneLoadBenchRecorderView lo
                 *m_device->handle(),
                 *m_device->graphics_queue().handle,
                 m_device->graphics_queue().family_index,
+                m_device->instance_dispatch().resolver,
             };
             m_ex_swapchain = info.ex_swapchain_factory(h);
             if (! m_ex_swapchain) {

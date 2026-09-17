@@ -9,26 +9,31 @@ namespace owe
 namespace vulkan
 {
 
-VmaBufferParameters::VmaBufferParameters()  = default;
-VmaBufferParameters::~VmaBufferParameters() = default;
-VmaBufferParameters::VmaBufferParameters(VmaBufferParameters&& o) noexcept
+AllocatedBufferParameters::AllocatedBufferParameters()  = default;
+AllocatedBufferParameters::~AllocatedBufferParameters() = default;
+AllocatedBufferParameters::AllocatedBufferParameters(AllocatedBufferParameters&& o) noexcept
     : handle(std::move(o.handle)), req_size(o.req_size) {}
-VmaBufferParameters& VmaBufferParameters::operator=(VmaBufferParameters&& o) noexcept {
+AllocatedBufferParameters&
+AllocatedBufferParameters::operator=(AllocatedBufferParameters&& o) noexcept {
     handle   = std::move(o.handle);
     req_size = o.req_size;
     return *this;
 }
 
-VmaImageParameters::VmaImageParameters()  = default;
-VmaImageParameters::~VmaImageParameters() = default;
-VmaImageParameters::VmaImageParameters(VmaImageParameters&& o) noexcept
+AllocatedImageParameters::AllocatedImageParameters()  = default;
+AllocatedImageParameters::~AllocatedImageParameters() = default;
+AllocatedImageParameters::AllocatedImageParameters(AllocatedImageParameters&& o) noexcept
     : handle(std::move(o.handle)),
       view(std::move(o.view)),
       sampler(std::move(o.sampler)),
       extent(o.extent),
       mipmap_level(o.mipmap_level),
       generation(o.generation) {}
-VmaImageParameters& VmaImageParameters::operator=(VmaImageParameters&& o) noexcept {
+AllocatedImageParameters&
+AllocatedImageParameters::operator=(AllocatedImageParameters&& o) noexcept {
+    if (this == &o) return *this;
+    view.reset();
+    sampler.reset();
     handle       = std::move(o.handle);
     view         = std::move(o.view);
     sampler      = std::move(o.sampler);
@@ -83,7 +88,7 @@ ImageSlotsRef::ImageSlotsRef()  = default;
 ImageSlotsRef::~ImageSlotsRef() = default;
 ImageSlotsRef::ImageSlotsRef(const ImageSlots& o) {
     slots.reserve(o.slots.size());
-    for (const auto& vma : o.slots) slots.push_back(ToImageParameters(vma));
+    for (const auto& image : o.slots) slots.push_back(ToImageParameters(image));
 }
 
 } // namespace vulkan

@@ -732,8 +732,11 @@ private:
             .type            = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
             .descriptorCount = 2048,
         });
-        auto created =
-            vvk::DescriptorArenaGeneration::Create(*device.handle(), 2048, sizes.as_slice());
+        auto created = vvk::DescriptorArenaGeneration::Create(
+            *device.handle(),
+            2048,
+            sizes.as_slice(),
+            vvk::DescriptorDeviceDispatch::FromDispatch(device.handle().Dispatch()));
         if (! created.created()) {
             return Err(resource::ResourceError {
                 .kind    = resource::ResourceErrorKind::BackendFailure,

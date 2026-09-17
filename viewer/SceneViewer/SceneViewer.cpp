@@ -21,6 +21,7 @@ extern "C" VkResult oweCreateGlfwCocoaSurface(GLFWwindow*, VkInstance, VkSurface
 extern "C" void     oweConfigureGlfwCocoaLayer(GLFWwindow*, int, int);
 #endif
 
+import vvk;
 import rstd.cppstd;
 import rstd.log;
 import wavsen.audio;
@@ -386,11 +387,13 @@ int main(int argc, char** argv) {
 
     viewer::InitGlfwPlatformHint(/*force_x11=*/false);
 #if __is_target_os(macos)
-    // GLFW normally dlopens libvulkan.1.dylib on macOS. That lookup is
-    // fragile for the Nix development shell (and can fail even though the
-    // executable already links the Vulkan loader). Use the loader exported by
-    // the executable so GLFW and the renderer query the same Vulkan dispatch.
-    glfwInitVulkanLoader(vkGetInstanceProcAddr);
+    auto loader_result = vvk::VulkanLoader::Open();
+    if (loader_result.is_err()) {
+        std::cerr << "Failed to load Vulkan\n";
+        return -1;
+    }
+    auto vulkan_loader = loader_result.unwrap_unchecked();
+    glfwInitVulkanLoader(vulkan_loader.global().vkGetInstanceProcAddr);
     if (! glfwInit()) {
         std::cerr << "Failed to initialize GLFW\n";
         return -1;

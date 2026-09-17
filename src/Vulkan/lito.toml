@@ -67,3 +67,10 @@ targets = [
   { name = "glslang::SPIRV", pub = true },
   { name = "glslang::glslang-default-resource-limits", pub = true },
 ]
+
+[[test]]
+name = "owe-vulkan-memory-tests"
+sources = ["tests/main.cpp", "tests/memory.cpp"]
+
+[dev-dependencies.rstd-test]
+workspace = true
